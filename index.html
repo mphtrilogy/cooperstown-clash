@@ -77,6 +77,18 @@
     cursor:pointer;color:var(--ink);text-transform:uppercase;
   }
   .filter-row button.active{background:var(--ink);color:var(--paper);}
+  .autodraft-row{text-align:right;margin:6px 0;}
+  .autodraft-row button{
+    font-family:'Courier New',monospace;font-size:0.72rem;letter-spacing:1px;
+    padding:7px 12px;background:var(--gold);border:1.5px solid var(--ink);border-radius:4px;
+    cursor:pointer;color:var(--ink);text-transform:uppercase;
+  }
+  .autodraft-row button:disabled{opacity:0.4;cursor:default;}
+  .team-filter-select{
+    font-family:'Courier New',monospace;font-size:0.72rem;letter-spacing:1px;
+    padding:6px 10px;background:var(--paper-light);border:1.5px solid var(--ink);border-radius:4px;
+    cursor:pointer;color:var(--ink);text-transform:uppercase;max-width:200px;
+  }
 
   /* rating bars */
   .ratebar-row{display:flex;align-items:center;gap:4px;font-size:0.66rem;font-family:'Courier New',monospace;color:var(--ink-soft);white-space:nowrap;}
@@ -319,14 +331,23 @@
     table.pool{font-size:0.7rem;}
     table.pool th, table.pool td{padding:5px 5px;}
     .rank-badge{min-width:18px; padding:1px 3px;}
-    .bench-cols{gap:12px;}
-    .lineups{gap:10px;}
+    /* Every side-by-side "your team vs their team" comparison view stacks
+       fully vertically on mobile instead of squeezing two narrow columns
+       into one row — squeezing them was the actual bug, not a style choice. */
+    .rosters{flex-direction:column; gap:12px;}
+    .bench-cols{flex-direction:column; gap:12px;}
+    .lineups{flex-direction:column; gap:10px;}
     .lineup-card, .roster-card{min-width:0; width:100%;}
     .mode-cards{gap:12px;}
     .mode-card{min-width:0;}
-    .champ-lineup-cols{gap:10px;}
+    .champ-lineup-cols{flex-direction:column; gap:10px;}
     .champ-lineup-cols .lineup-setup-card{min-width:0; width:100%;}
     .champ-picker-row{flex-direction:column;}
+    .box-score-panel{padding:8px 8px;}
+    table.boxscore{font-size:0.62rem;}
+    table.boxscore th, table.boxscore td{padding:3px 3px;}
+    table.boxscore th{font-size:0.52rem;}
+    .boxscore-pitching{font-size:0.66rem;}
     .big-play-banner{font-size:0.85rem; padding:6px 12px; max-width:90%;}
     .pitch-change-card{font-size:0.62rem; max-width:92%; white-space:normal;}
     .status-row{font-size:0.68rem;}
@@ -573,6 +594,8 @@
 
     <div class="pick-tracker" id="pickTracker">Set your team name, then start the draft. You'll draft 9 starters, 3 bench bats, and 2 relievers (14 rounds) in a snake draft against a CPU GM.</div>
 
+    <div class="autodraft-row hidden" id="autodraftRow"><button class="secondary" id="autoDraftBtn">🤖 Auto-Draft Rest</button></div>
+
     <div class="rosters" id="rosterBoards"></div>
 
     <div class="sort-row" id="sortRow"></div>
@@ -813,12 +836,25 @@ function firstOpenSlotFor(side, pos){
 }
 
 function cpuScore(p){ return p.rawValue; }
-function cpuPick(){
-  const candidates = eligiblePlayers('cpu');
+function cpuPick(side){
+  side = side || 'cpu';
+  const candidates = eligiblePlayers(side);
   if(candidates.length===0) return null;
   candidates.sort((a,b)=> cpuScore(b)-cpuScore(a));
   const top = candidates.slice(0, Math.min(4, candidates.length));
   return pick(top);
+}
+/* Auto-Draft Rest — usable at any point mid-draft, not just at the start.
+   Finishes out both rosters using the same best-value-with-a-little-variety
+   logic the CPU already uses for itself. */
+function autoDraftRest(){
+  while(!draft.done){
+    const side = draft.order[draft.pickIdx];
+    const p = cpuPick(side);
+    if(p) draftPlayer(side, p.id); else draft.pickIdx++;
+    if(draft.pickIdx>=SLOT_DEFS.length*2){ draft.done=true; break; }
+  }
+  renderDraft();
 }
 
 /* Greedily fills a full 14-slot roster from a shared player pool (mutates pool).
@@ -916,6 +952,9 @@ function runCpuUntilYourTurn(){
 /* ---------------- Draft UI ---------------- */
 const teamNameInput = document.getElementById('teamNameInput');
 const beginDraftBtn = document.getElementById('beginDraftBtn');
+const autoDraftBtn = document.getElementById('autoDraftBtn');
+const autodraftRow = document.getElementById('autodraftRow');
+autoDraftBtn.addEventListener('click', autoDraftRest);
 const pickTracker = document.getElementById('pickTracker');
 const rosterBoards = document.getElementById('rosterBoards');
 const filterRow = document.getElementById('filterRow');
@@ -972,12 +1011,15 @@ function renderRosterBoard(side, title){
 function renderDraft(){
   rosterBoards.innerHTML = renderRosterBoard('you', draft.you.name || 'Your Team') + renderRosterBoard('cpu', draft.cpu.name);
   const totalPicks = SLOT_DEFS.length*2;
+  const draftActuallyStarted = beginDraftBtn.disabled; // only true once "Start the Draft" has been clicked
   if(draft.done){
     pickTracker.innerHTML = `<span class="whose">DRAFT COMPLETE</span> — both rosters are set. Continue to set your lineup.`;
+    autodraftRow.classList.add('hidden');
   } else {
     const roundNum = Math.floor(draft.pickIdx/2)+1;
     const whose = isYourTurn() ? "YOUR PICK" : "CPU is picking...";
     pickTracker.innerHTML = `Pick ${draft.pickIdx+1} of ${totalPicks} · Round ${roundNum} of ${SLOT_DEFS.length} — <span class="whose">${whose}</span>`;
+    autodraftRow.classList.toggle('hidden', !draftActuallyStarted);
   }
   renderSortRow();
   renderFilterRow();
@@ -1015,15 +1057,19 @@ function renderFilterRow(){
 function renderTeamFilterRow(){
   const teams = [...new Set(draft.pool.map(p=>p.team).filter(Boolean))].sort();
   const opts = ['ALL', ...teams];
-  teamFilterRow.innerHTML = `<span class="pos-rank" style="align-self:center;margin-right:2px;">Team:</span>` + opts.map(t=>{
-    const active = t===currentTeamFilter ? 'active':'';
-    return `<button class="${active}" data-team="${t}">${t==='ALL'?'All Teams':t}</button>`;
-  }).join('');
-  teamFilterRow.querySelectorAll('button').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ currentTeamFilter = btn.dataset.team; renderPoolTable(); syncTeamFilterButtons(); });
+  teamFilterRow.innerHTML = `<span class="pos-rank" style="align-self:center;margin-right:6px;">Team:</span>
+    <select id="teamFilterSelect" class="team-filter-select">
+      ${opts.map(t=>`<option value="${t}" ${t===currentTeamFilter?'selected':''}>${t==='ALL'?'All Teams':t}</option>`).join('')}
+    </select>`;
+  document.getElementById('teamFilterSelect').addEventListener('change', (e)=>{
+    currentTeamFilter = e.target.value;
+    renderPoolTable();
   });
 }
-function syncTeamFilterButtons(){ teamFilterRow.querySelectorAll('button').forEach(b=> b.classList.toggle('active', b.dataset.team===currentTeamFilter)); }
+function syncTeamFilterButtons(){
+  const sel = document.getElementById('teamFilterSelect');
+  if(sel) sel.value = currentTeamFilter;
+}
 
 function renderPoolTable(){
   let list = draft.pool.slice();
@@ -2001,6 +2047,7 @@ function resetToDraft(){
   teamNameInput.disabled=false; beginDraftBtn.disabled=false; teamNameInput.value='';
   pickTracker.textContent = 'Set your team name, then start the draft.';
   rosterBoards.innerHTML=''; filterRow.innerHTML=''; poolTable.innerHTML='';
+  autodraftRow.classList.add('hidden');
   viewSeasonResultsBtn.classList.add('hidden');
   rematchBtn.classList.add('hidden');
   benchPanel.classList.remove('hidden');
@@ -2016,6 +2063,7 @@ function goHome(){
   document.getElementById('gameOverBanner').classList.add('hidden');
   boxScorePanel.classList.add('hidden'); boxScoreBtn.textContent = '📋 Box Score';
   document.getElementById('champBullpenPanel').classList.add('hidden');
+  autodraftRow.classList.add('hidden');
   viewSeasonResultsBtn.classList.add('hidden'); rematchBtn.classList.add('hidden');
   teamNameInput.disabled=false; beginDraftBtn.disabled=false; teamNameInput.value='';
   rosterBoards.innerHTML=''; filterRow.innerHTML=''; poolTable.innerHTML='';
