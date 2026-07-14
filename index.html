@@ -314,12 +314,19 @@
        subtitle, coffee link) is just eating screen space above the diamond —
        you've already seen it on the home screen. Strip it to a minimal strip
        so more of the actual action (score, diamond, at-bat) fits on one
-       screen without scrolling. */
-    body.compact-header header.masthead{ padding:2px 0; margin-bottom:2px; }
+       screen without scrolling. It also stays pinned at the top while you
+       scroll, so score/Home/Leaderboard are always one glance away. */
+    body.compact-header header.masthead{
+      padding:2px 0; margin-bottom:0; position:sticky; top:0; z-index:30;
+      background:var(--paper); box-shadow:0 2px 4px rgba(0,0,0,0.08);
+    }
     body.compact-header header.masthead h1{ font-size:0.8rem; letter-spacing:0.5px; }
     body.compact-header header.masthead .sub{ display:none; }
     body.compact-header header.masthead .coffee-link{ display:none; }
-    body.compact-header .top-nav-row{ margin-bottom:2px; }
+    body.compact-header .top-nav-row{
+      margin-bottom:4px; position:sticky; top:26px; z-index:29;
+      background:var(--paper); padding:3px 0 2px;
+    }
     body.compact-header .top-nav-row button{ padding:3px 6px; font-size:0.58rem; }
     /* The full per-inning scoreboard is the single biggest thing standing between
        loading the page and seeing the diamond on a phone. scorebug already covers
@@ -721,11 +728,11 @@
 
     <div class="box-score-panel hidden" id="boxScorePanel"></div>
 
-    <div class="bench-panel" id="benchPanel"></div>
-    <div class="bench-panel hidden" id="champBullpenPanel"></div>
-
     <div class="log-panel" id="logPanel"></div>
     <div class="lineups" id="lineups"></div>
+
+    <div class="bench-panel" id="benchPanel"></div>
+    <div class="bench-panel hidden" id="champBullpenPanel"></div>
   </div>
 
   <footer>Career stats sourced from the Chadwick Baseball Bureau / Sean Lahman Baseball Database (CC BY-SA), covering BBWAA &amp; Veterans Committee inductees. Team shown is the franchise each player logged the most career games with. OVR is a 20–80 scouting-scale grade against the full HOF pool. Value (VBD) compares a player to the best remaining talent at their position. Pitcher fatigue is a house-rule stamina model based on batters faced, not an official metric. Single d20 card per plate appearance.</footer>
