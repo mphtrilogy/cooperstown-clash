@@ -1402,6 +1402,15 @@ function showLineupReveal(away, home, onComplete){
     clearInterval(timer);
     lineupRevealView.classList.add('hidden');
     onComplete();
+    // Brief safety window — a fast tap on "Skip Reveal" can sometimes land on
+    // "Next At-Bat" in the same motion once the view swaps underneath your
+    // finger, since the buttons can end up in roughly the same screen spot.
+    // Disabling briefly here guarantees the first pitch always waits for a
+    // real, separate, deliberate tap.
+    stepBtn.disabled = true; simInningBtn.disabled = true; simGameBtn.disabled = true;
+    setTimeout(()=>{
+      if(!state.over){ stepBtn.disabled = false; simInningBtn.disabled = false; simGameBtn.disabled = false; }
+    }, 500);
   }
   renderCard();
   const timer = setInterval(()=>{
