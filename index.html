@@ -316,8 +316,13 @@
     .scoreboard{display:none;}
     .status-row{margin:0 0 4px; font-size:0.66rem;}
     .strategy-hint{padding:5px 8px; font-size:0.66rem; margin-bottom:6px;}
-    .diamond-box{flex:1 1 100%; padding:10px;}
-    .field-card{gap:10px; margin-bottom:8px;}
+    .diamond-box{
+      flex:0 1 auto; padding:8px; max-width:190px; width:100%;
+      margin:0 auto; /* shrunk further — a phone screen needs room to actually
+        show the action (batter, result, buttons) without heavy scrolling;
+        the diamond only needs to be legible, not dominant. */
+    }
+    .field-card{gap:8px; margin-bottom:8px; align-items:center;}
     .atbat-card{padding:10px 12px;}
     .mu-batter-stat{font-size:0.85rem;}
     .batter-name{font-size:1.1rem;}
@@ -355,19 +360,19 @@
 
   /* ---------- Big play banner ---------- */
   .big-play-banner{
-    position:absolute; top:8px; left:50%; transform:translateX(-50%) scale(0.4);
+    position:fixed; top:40%; left:50%; transform:translate(-50%,-50%) scale(0.4);
     background:var(--ink); color:var(--gold); font-family:'Courier New',monospace; font-weight:bold;
     letter-spacing:2px; padding:8px 18px; border-radius:6px; opacity:0; pointer-events:none;
-    z-index:5; text-transform:uppercase; font-size:1.05rem; box-shadow:0 3px 0 var(--away);
+    z-index:50; text-transform:uppercase; font-size:1.05rem; box-shadow:0 3px 0 var(--away);
     white-space:nowrap;
   }
   .big-play-banner.show{ animation: bigPlayPop 1.3s ease forwards; }
   @keyframes bigPlayPop{
-    0%{ opacity:0; transform:translateX(-50%) scale(0.4) translateY(10px); }
-    15%{ opacity:1; transform:translateX(-50%) scale(1.15) translateY(-4px); }
-    30%{ transform:translateX(-50%) scale(1) translateY(0); }
+    0%{ opacity:0; transform:translate(-50%,-50%) scale(0.4) translateY(10px); }
+    15%{ opacity:1; transform:translate(-50%,-50%) scale(1.15) translateY(-4px); }
+    30%{ transform:translate(-50%,-50%) scale(1) translateY(0); }
     78%{ opacity:1; }
-    100%{ opacity:0; transform:translateX(-50%) scale(1) translateY(-6px); }
+    100%{ opacity:0; transform:translate(-50%,-50%) scale(1) translateY(-6px); }
   }
   .big-play-banner.hr{ background:var(--away); color:#fff; box-shadow:0 3px 0 #5c2419; }
   .big-play-banner.k{ background:var(--ink-soft); color:var(--paper-light); box-shadow:0 3px 0 #2e364c; }
@@ -522,7 +527,7 @@
     <div class="mode-cards">
       <div class="mode-card">
         <h3>🏟️ The Hall of Fame Game</h3>
-        <p>Draft a 14-man roster of real Hall of Famers, set your lineup and pitching staff, then play exhibitions or a full 162-game season against CPU clubs.</p>
+        <p>Draft a 15-man roster of real Hall of Famers, set your lineup and pitching staff, then play exhibitions or a full 162-game season against CPU clubs.</p>
         <button class="big" id="chooseHofBtn">Play the Hall of Fame Game</button>
       </div>
       <div class="mode-card">
@@ -592,7 +597,7 @@
       <button class="big" id="beginDraftBtn">Start the Draft</button>
     </div>
 
-    <div class="pick-tracker" id="pickTracker">Set your team name, then start the draft. You'll draft 9 starters, 3 bench bats, and 2 relievers (14 rounds) in a snake draft against a CPU GM.</div>
+    <div class="pick-tracker" id="pickTracker">Set your team name, then start the draft. You'll draft 8 field starters, a designated hitter, a starting pitcher, 3 bench bats, and 2 relievers (15 rounds) in a snake draft against a CPU GM.</div>
 
     <div class="autodraft-row hidden" id="autodraftRow"><button class="secondary" id="autoDraftBtn">🤖 Auto-Draft Rest</button></div>
 
@@ -784,6 +789,7 @@ const SLOT_DEFS = [
   {key:'LF',  label:'Left Field',   accepts:['LF']},
   {key:'CF',  label:'Center Field', accepts:['CF']},
   {key:'RF',  label:'Right Field',  accepts:['RF']},
+  {key:'DH',  label:'Designated Hitter', accepts:['C','1B','2B','3B','SS','LF','CF','RF']},
   {key:'SP',  label:'Starting Pitcher', accepts:['P']},
   {key:'BN1', label:'Bench',        accepts:['C','1B','2B','3B','SS','LF','CF','RF']},
   {key:'BN2', label:'Bench',        accepts:['C','1B','2B','3B','SS','LF','CF','RF']},
@@ -791,7 +797,7 @@ const SLOT_DEFS = [
   {key:'RP1', label:'Reliever',     accepts:['P']},
   {key:'RP2', label:'Reliever',     accepts:['P']},
 ];
-const STARTER_FIELD_SLOTS = ["C","1B","2B","3B","SS","LF","CF","RF"];
+const STARTER_FIELD_SLOTS = ["C","1B","2B","3B","SS","LF","CF","RF","DH"];
 const ALL_SLOT_KEYS = SLOT_DEFS.map(s=>s.key);
 const CPU_TEAM_NAMES = ["Gotham Grays","Empire State Nine","Harbor Hill Hawks","Sound Shore Sharks",
   "Bayfront Bombers","Iron Rail Giants","Turnstile Titans","Borough Blues"];
@@ -891,6 +897,7 @@ function autoFillChampsRoster(pool, teamName){
   const slotDefs = [
     {key:'C',accepts:['C']},{key:'1B',accepts:['1B']},{key:'2B',accepts:['2B']},{key:'3B',accepts:['3B']},
     {key:'SS',accepts:['SS']},{key:'LF',accepts:['LF']},{key:'CF',accepts:['CF']},{key:'RF',accepts:['RF']},
+    {key:'DH',accepts:['C','1B','2B','3B','SS','LF','CF','RF']},
     {key:'SP',accepts:['P'],pitcherRole:'starter'},
     {key:'RP1',accepts:['P'],pitcherRole:'starter'},
     {key:'RP2',accepts:['P'],pitcherRole:'starter'},
@@ -1222,7 +1229,7 @@ function renderLineupSetup(){
         <button data-dir="down" data-i="${i}" ${i===yourLineupOrder.length-1?'disabled':''}>▼</button>
       </span>
     </div>`;
-  }).join('') + `<div class="lineup-row"><span class="batting-num">9</span><span class="who">${roster[yourStarterSlot].name} <span class="pos-rank">(P)</span></span><span></span></div>`;
+  }).join('');
 
   lineupRows.querySelectorAll('button').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -1250,10 +1257,7 @@ function makeGamePlayer(p){
   };
 }
 function buildLineupFromRoster(roster, order){
-  const lineup = order.map(slotKey=> makeGamePlayer(roster[slotKey]));
-  const sp = roster['SP'];
-  lineup.push(Object.assign(makeGamePlayer(sp), {name: sp.name+" (P)", power:2, contact:3, speed:3, career:null}));
-  return lineup;
+  return order.map(slotKey=> makeGamePlayer(roster[slotKey]));
 }
 function makeGamePitcher(p, isRelief){
   return { id:p.id, name:p.name, team:p.team, stuff:p.ratings.stuff, control:p.ratings.control, career:p.career||null,
@@ -1265,11 +1269,14 @@ function makeGamePitcher(p, isRelief){
 function careerLine(entity, isPitcher){
   if(!entity.career) return '';
   const c = entity.career;
+  // Champions mode uses that specific real season's stats, not a career total —
+  // the label needs to say so, or it reads as factually wrong (and it was).
+  const period = (typeof state !== 'undefined' && state && state.isChampsMode) ? 'season' : 'career';
   if(isPitcher){
     const roleTag = c.GS!==undefined ? (c.GS/(c.G||1) >= 0.5 ? 'Starter' : 'Reliever') : '';
-    return `${c.W}-${c.L}, ${c.ERA} ERA, ${c.K} K career${roleTag?' · '+roleTag:''}`;
+    return `${c.W}-${c.L}, ${c.ERA} ERA, ${c.K} K ${period}${roleTag?' · '+roleTag:''}`;
   }
-  return `.${String(Math.round(c.AVG*1000)).padStart(3,'0')} AVG, ${c.HR} HR, ${c.RBI} RBI career`;
+  return `.${String(Math.round(c.AVG*1000)).padStart(3,'0')} AVG, ${c.HR} HR, ${c.RBI} RBI ${period}`;
 }
 /* No real player photos (nothing licensed to show), so every player gets a
    consistent little "trading card" avatar instead — initials on a color
@@ -1301,8 +1308,9 @@ function wikiLink(name){
 /* Shared shape used by every in-game team, whether it's your drafted team,
    your draft rival, or one of the auto-built Season Mode clubs. */
 function buildGameTeamFromRoster(roster, teamName, lineupOrder){
+  const starter = makeGamePitcher(roster['SP']);
   return { name: teamName, lineup: buildLineupFromRoster(roster, lineupOrder),
-    pitcher: makeGamePitcher(roster['SP']), score:0, lineByInning:[],
+    pitcher: starter, pitchersUsed: [starter], score:0, lineByInning:[],
     bench: [roster['BN1'],roster['BN2'],roster['BN3']],
     bullpen: [roster['RP1'],roster['RP2'],roster['RP3']].filter(Boolean),
     usedBench: new Set(), usedBullpen: new Set(), lineupSlots: lineupOrder.slice() };
@@ -1353,7 +1361,7 @@ function showLineupReveal(away, home, onComplete){
   const cards = [];
   [away, home].forEach(team=>{
     team.lineup.forEach((b,i)=>{
-      const posLabel = i<8 ? team.lineupSlots[i] : 'P';
+      const posLabel = team.lineupSlots[i]; // all 9 batters are real position players now (DH included), no more pitcher-as-9th-batter special case
       cards.push({team:team.name, battingNum:i+1, name:b.name, pos:posLabel, teamTag:b.team, stat: b.career?careerLine(b,false):null});
     });
   });
@@ -1365,7 +1373,7 @@ function showLineupReveal(away, home, onComplete){
     revealCard.classList.remove('flip');
     void revealCard.offsetWidth;
     revealCard.innerHTML = `<div class="rc-team">${c.teamTag?`<span class="team-tag">${c.teamTag}</span>`:''}${c.team}</div>
-      <div class="rc-batting">Batting ${c.battingNum===9?'9th (P)':c.battingNum+ordinalSuffix(c.battingNum)} · ${c.pos}</div>
+      <div class="rc-batting">Batting ${c.battingNum+ordinalSuffix(c.battingNum)} · ${c.pos}</div>
       <div class="rc-name">${c.name}</div>
       ${c.stat?`<div class="rc-stat">${c.stat}</div>`:''}`;
     revealCard.classList.add('flip');
@@ -1388,7 +1396,12 @@ function showLineupReveal(away, home, onComplete){
 function ordinalSuffix(n){ const s=["th","st","nd","rd"], v=n%100; return (s[(v-20)%10]||s[v]||s[0]); }
 
 function buildCard(batter, effStuff, effControl){
-  let w = { K:16, GO:20.5, FO:16.5, BB:8, "1B":23, "2B":8, "3B":1.5, HR:5.5, E:1.5 };
+  // Baseline shifted meaningfully toward outs vs. the original tuning — that
+  // tuning assumed 1 of every 9 lineup spots was a near-automatic weak out
+  // (the pitcher batting). Now that a real DH replaces that spot, every team
+  // is a genuinely dangerous 9-man lineup, so the baseline itself needs to
+  // be tighter to keep scores feeling like baseball rather than football.
+  let w = { K:20, GO:23, FO:18, BB:6.5, "1B":17, "2B":7, "3B":1.3, HR:5.5, E:1.2 };
   const powerDelta = (batter.power - 5.5)/5.5;
   const contactDelta = (batter.contact - 5.5)/5.5;
   const pitchDelta = (effStuff - 5.5)/5.5;
@@ -1396,8 +1409,8 @@ function buildCard(batter, effStuff, effControl){
   w.HR *= (1 + powerDelta*0.9); w["2B"] *= (1 + powerDelta*0.5);
   w["3B"] *= (1 + powerDelta*0.3 + (batter.speed-5.5)/10); w.GO *= (1 - powerDelta*0.3);
   w["1B"] *= (1 + contactDelta*0.6); w.K *= (1 - contactDelta*0.5); w.BB *= (1 + contactDelta*0.15);
-  w.K *= (1 + pitchDelta*0.85); w.HR *= (1 - pitchDelta*0.65); w["1B"] *= (1 - pitchDelta*0.4); w["2B"] *= (1 - pitchDelta*0.35);
-  w.BB *= (1 - ctrlDelta*0.7); w.K *= (1 + ctrlDelta*0.25);
+  w.K *= (1 + pitchDelta*1.0); w.HR *= (1 - pitchDelta*0.75); w["1B"] *= (1 - pitchDelta*0.5); w["2B"] *= (1 - pitchDelta*0.45);
+  w.BB *= (1 - ctrlDelta*0.8); w.K *= (1 + ctrlDelta*0.3);
   Object.keys(w).forEach(k=> w[k] = Math.max(0.3, w[k]));
   const total = Object.values(w).reduce((a,b)=>a+b,0);
   const order = ["HR","3B","2B","1B","BB","E","FO","GO","K"];
@@ -1542,15 +1555,26 @@ function resolveAtBat(){
 function cpuAutoSub(team){
   if(team===state.home && !state.autoManageBoth) return;
   const fat = fatigueTier(team.pitcher);
-  if(fat.tier==='gassed'){
-    const availIdx = team.bullpen.findIndex((p,i)=> p && !team.usedBullpen.has(i));
-    if(availIdx>=0){
-      const rp = team.bullpen[availIdx];
-      team.usedBullpen.add(availIdx);
-      team.pitcher = makeGamePitcher(rp, true);
-      log(`${team.name} brings in reliever ${rp.name} (${rp.team}).`, 'sub-line');
-    }
+  if(fat.tier!=='gassed') return;
+  const available = team.bullpen
+    .map((p,i)=>({p,i}))
+    .filter(({p,i}) => p && !team.usedBullpen.has(i));
+  if(!available.length) return;
+  // Real bullpen usage: save the true closer (reliever-profile arm) for the
+  // 9th inning or later. Use everyone else first — that's how an actual
+  // manager would deploy a staff, not just whoever's next in a list.
+  const isLate = state.inning >= 9;
+  let choice;
+  if(isLate){
+    choice = available.find(({p}) => !isRealStarterProfile(p)) || available[0];
+  } else {
+    choice = available.find(({p}) => isRealStarterProfile(p)) || available[0];
   }
+  const rp = choice.p;
+  team.usedBullpen.add(choice.i);
+  team.pitcher = makeGamePitcher(rp, true);
+  team.pitchersUsed.push(team.pitcher);
+  log(`${team.name} brings in reliever ${rp.name} (${rp.team}).`, 'sub-line');
 }
 
 function decideGameOver(justFinishedHalf, justFinishedInning){
@@ -1615,6 +1639,7 @@ function subInReliever(bullpenIdx){
   if(!rp) return false;
   team.usedBullpen.add(bullpenIdx);
   team.pitcher = makeGamePitcher(rp, true);
+  team.pitchersUsed.push(team.pitcher);
   log(`${state.home.name} brings in reliever ${rp.name} (${rp.team}).`, 'sub-line');
   return true;
 }
@@ -1627,6 +1652,7 @@ function subInRelieverSide(teamKey, bullpenIdx){
   if(!rp) return false;
   team.usedBullpen.add(bullpenIdx);
   team.pitcher = makeGamePitcher(rp, true);
+  team.pitchersUsed.push(team.pitcher);
   log(`${team.name} brings in reliever ${rp.name} (${rp.team}).`, 'sub-line');
   return true;
 }
@@ -1812,7 +1838,7 @@ function renderLineups(){
     let rows = team.lineup.map((b,i)=>{
       const up = isBatting && (i===curIdx);
       const teamTag = b.team ? `<span class="team-tag">${b.team}</span>` : '';
-      const posLabel = i<8 ? team.lineupSlots[i] : 'P';
+      const posLabel = team.lineupSlots[i]; // all 9 batters are real position players now (DH included), no more pitcher-as-9th-batter special case
       const tip = b.career ? careerLine(b,false) : '';
       return `<tr class="${up?'up':''}"><td class="pos">${posLabel}</td><td title="${tip}">${teamTag}${b.name}${wikiLink(b.name)}</td>
         <td class="rat">${b.stats.h}-${b.stats.ab}</td><td class="rat">${b.stats.hr}HR</td><td class="rat">${b.stats.rbi}RBI</td></tr>`;
@@ -1948,7 +1974,7 @@ function renderAll(rollInfo){
 function renderBoxScore(){
   function teamBox(team){
     const rows = team.lineup.map((b,i)=>{
-      const posLabel = i<8 ? team.lineupSlots[i] : 'P';
+      const posLabel = team.lineupSlots[i]; // all 9 batters are real position players now (DH included), no more pitcher-as-9th-batter special case
       const teamTag = b.team ? `<span class="team-tag">${b.team}</span>` : '';
       return `<tr><td>${posLabel}</td><td>${teamTag}${b.name}${wikiLink(b.name)}</td>
         <td class="num">${b.stats.ab}</td><td class="num">${b.stats.r}</td><td class="num">${b.stats.h}</td>
@@ -1961,13 +1987,16 @@ function renderBoxScore(){
     const totalsRow = `<tr class="totals"><td colspan="2">Totals</td>
       <td class="num">${totals.ab}</td><td class="num">${totals.r}</td><td class="num">${totals.h}</td>
       <td class="num">${totals.rbi}</td><td class="num">${totals.bb}</td><td class="num">${totals.k}</td></tr>`;
-    const p = team.pitcher;
-    const pTeamTag = p.team ? `<span class="team-tag">${p.team}</span>` : '';
-    const ip = `${Math.floor(p.stats.outs/3)}.${p.stats.outs%3}`;
+    const pitchingLines = team.pitchersUsed.map((p, idx)=>{
+      const pTeamTag = p.team ? `<span class="team-tag">${p.team}</span>` : '';
+      const ip = `${Math.floor(p.stats.outs/3)}.${p.stats.outs%3}`;
+      const role = idx===0 ? 'SP' : 'RP';
+      return `<div class="bp-line"><strong>${role}:</strong> ${pTeamTag}${p.name}${wikiLink(p.name)} — ${ip} IP, ${p.stats.h} H, ${p.stats.er} ER, ${p.stats.bb} BB, ${p.stats.k} K</div>`;
+    }).join('');
     return `<div class="box-score-team">
       <h3>${team.name} — ${team.score} run${team.score===1?'':'s'}</h3>
       <table class="boxscore"><tr><th>Pos</th><th>Player</th><th>AB</th><th>R</th><th>H</th><th>RBI</th><th>BB</th><th>K</th></tr>${rows}${totalsRow}</table>
-      <div class="boxscore-pitching"><div class="bp-line"><strong>P:</strong> ${pTeamTag}${p.name}${wikiLink(p.name)} — ${ip} IP, ${p.stats.h} H, ${p.stats.er} ER, ${p.stats.bb} BB, ${p.stats.k} K</div></div>
+      <div class="boxscore-pitching">${pitchingLines}</div>
     </div>`;
   }
   boxScorePanel.innerHTML = teamBox(state.away) + teamBox(state.home);
@@ -1980,14 +2009,22 @@ boxScoreBtn.addEventListener('click', ()=>{
 
 let isRolling = false;
 function scrollResultIntoView(){
-  const el = document.querySelector('.atbat-card');
-  if(el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'center'});
+  // Manual scroll calculation with an explicit safety buffer, rather than
+  // relying on scrollIntoView's native positioning — that was landing a few
+  // pixels short on iOS Safari (likely its dynamic address-bar behavior
+  // shifting the viewport mid-scroll), consistently cutting off the top of
+  // the diamond even after aiming for "top of field-card".
+  const el = document.querySelector('.field-card');
+  if(!el) return;
+  const rect = el.getBoundingClientRect();
+  const buffer = 24; // extra room so minor viewport shifts can't cut the top off again
+  const targetY = window.scrollY + rect.top - buffer;
+  window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
 }
 stepBtn.addEventListener('click', ()=>{
   if(isRolling || state.over) return;
   isRolling = true;
   stepBtn.disabled = true; simInningBtn.disabled = true; simGameBtn.disabled = true;
-  scrollResultIntoView();
   const beforeAwayP = state.away.pitcher.name, beforeHomeP = state.home.pitcher.name;
   const beforeHalf = state.half, beforeInning = state.inning;
   const beforeAwayScore = state.away.score, beforeHomeScore = state.home.score;
@@ -2008,6 +2045,11 @@ stepBtn.addEventListener('click', ()=>{
         if(state.home.pitcher.name !== beforeHomeP) showPitchingChangeCard(state.home.pitcher);
         renderAll(info);
         if(!state.isChampsMode) renderBenchPanel(); else renderChampBullpenPanel();
+        // Scroll only after everything above the diamond (status text, score,
+        // etc.) has actually settled into its final layout for this at-bat —
+        // scrolling any earlier was measuring a position that then shifted
+        // underneath the page a moment later.
+        requestAnimationFrame(()=> requestAnimationFrame(scrollResultIntoView));
         if(state.half !== beforeHalf || state.inning !== beforeInning){
           const halfTeamKey = beforeHalf==='top' ? 'away' : 'home';
           const runsThisHalf = (halfTeamKey==='away'?state.away.score-beforeAwayScore:state.home.score-beforeHomeScore);
@@ -2132,17 +2174,20 @@ const SEASON_LENGTH = 162;
 function accumulateSeasonStats(league, teamState){
   teamState.lineup.forEach(b=>{
     if(!b.id) return;
-    if(b.career === null) return; // this is the pitcher's own token lineup spot (bats 9th) — not real batting data, skip so it can't collide with his pitcher-role stats under the same id
     if(!league.seasonStats[b.id]) league.seasonStats[b.id] = {name:b.name, team:b.team, isPitcher:false, ab:0,h:0,hr:0,bb:0,rbi:0,r:0,k:0};
     const s = league.seasonStats[b.id];
     s.ab+=b.stats.ab; s.h+=b.stats.h; s.hr+=b.stats.hr; s.bb+=b.stats.bb; s.rbi+=b.stats.rbi; s.r+=b.stats.r; s.k+=b.stats.k;
   });
-  const p = teamState.pitcher;
-  if(p.id){
+  // Every pitcher who actually appeared gets credited — not just whoever
+  // happened to be on the mound when the game ended. A starter who got
+  // pulled after 5 innings shouldn't lose those innings from his season line.
+  const pitchers = teamState.pitchersUsed || [teamState.pitcher];
+  pitchers.forEach(p=>{
+    if(!p.id) return;
     if(!league.seasonStats[p.id]) league.seasonStats[p.id] = {name:p.name, team:p.team, isPitcher:true, outs:0,er:0,k:0,bb:0,h:0};
     const sp = league.seasonStats[p.id];
     sp.outs+=p.stats.outs; sp.er+=p.stats.er; sp.k+=p.stats.k; sp.bb+=p.stats.bb; sp.h+=p.stats.h;
-  }
+  });
 }
 
 function simulateRegularSeason(league, gamesPerTeam){
@@ -2618,7 +2663,7 @@ function renderChampBattingCol(side, containerId){
         <button data-side="${side===champA?'A':'B'}" data-dir="down" data-i="${i}" ${i===side.order.length-1?'disabled':''}>▼</button>
       </span>
     </div>`;
-  }).join('') + `<div class="lineup-row"><span class="batting-num">9</span><span class="who">${side.roster[side.starterSlot].name}${wikiLink(side.roster[side.starterSlot].name)} <span class="pos-rank">(P)</span></span><span></span></div>`;
+  }).join('');
   el.innerHTML = rows;
   el.querySelectorAll('button').forEach(btn=>{
     btn.addEventListener('click', ()=>{
