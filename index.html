@@ -310,6 +310,17 @@
     header.masthead .coffee-link{margin-top:4px; padding:4px 10px; font-size:0.66rem;}
     .top-nav-row{margin-bottom:4px;}
     .top-nav-row button{padding:5px 8px; font-size:0.64rem;}
+    /* Once a game is actually in progress, the big decorative header (title,
+       subtitle, coffee link) is just eating screen space above the diamond —
+       you've already seen it on the home screen. Strip it to a minimal strip
+       so more of the actual action (score, diamond, at-bat) fits on one
+       screen without scrolling. */
+    body.compact-header header.masthead{ padding:2px 0; margin-bottom:2px; }
+    body.compact-header header.masthead h1{ font-size:0.8rem; letter-spacing:0.5px; }
+    body.compact-header header.masthead .sub{ display:none; }
+    body.compact-header header.masthead .coffee-link{ display:none; }
+    body.compact-header .top-nav-row{ margin-bottom:2px; }
+    body.compact-header .top-nav-row button{ padding:3px 6px; font-size:0.58rem; }
     /* The full per-inning scoreboard is the single biggest thing standing between
        loading the page and seeing the diamond on a phone. scorebug already covers
        score/inning/outs compactly, so hide the big table on small screens. */
@@ -2586,6 +2597,10 @@ function showView(el){
   el.classList.remove('view-anim');
   void el.offsetWidth; // force reflow so the animation restarts every time
   el.classList.add('view-anim');
+  // Once you're actually mid-game, the big decorative header (title, coffee
+  // link, subtitle) is just eating screen space above the diamond on mobile —
+  // compact it down so more of the actual action fits on one screen.
+  document.body.classList.toggle('compact-header', el.id === 'gameView');
 }
 
 function showModeSelect(){
