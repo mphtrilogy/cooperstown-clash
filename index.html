@@ -1160,8 +1160,10 @@ function renderPoolTable(){
   poolTable.querySelectorAll('.draft-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       if(!isYourTurn()) return;
+      const pickedPlayer = draft.pool.find(p=>p.id===btn.dataset.id);
       const ok = draftPlayer('you', btn.dataset.id);
       if(ok){
+        if(pickedPlayer) recordManualDraftPick(pickedPlayer.id, pickedPlayer.name);
         if(draft.pickIdx>=SLOT_DEFS.length*2){ draft.done=true; }
         else runCpuUntilYourTurn();
         renderDraft();
@@ -2025,6 +2027,20 @@ function renderAll(rollInfo){
     viewSeasonResultsBtn.classList.remove('hidden');
     viewSeasonResultsBtn.onclick = ()=>{ renderSeasonView(state.league, championName); };
   }
+  // A plain one-off exhibition game (not season, not Champions/World Series) —
+  // your drafted team is always `home` here. Sync that single game's real
+  // stat line into the same persistent performance leaderboard.
+  if(!state.isChampionship && !state.isChampsMode && state.over && !state._exhibitionRecorded){
+    state._exhibitionRecorded = true;
+    state.home.lineup.forEach(b=>{
+      if(!b.id) return;
+      syncPlayerPerformance(b.id, b.name, false, { ab:b.stats.ab, h:b.stats.h, hr:b.stats.hr, rbi:b.stats.rbi, bb:b.stats.bb, k:b.stats.k, r:b.stats.r });
+    });
+    (state.home.pitchersUsed || [state.home.pitcher]).forEach(p=>{
+      if(!p.id) return;
+      syncPlayerPerformance(p.id, p.name, true, { outs:p.stats.outs, er:p.stats.er, k:p.stats.k, bb:p.stats.bb, h:p.stats.h });
+    });
+  }
   rematchBtn.classList.toggle('hidden', !(state.over && !state.isChampionship && !state.isWorldSeriesGame));
   if(state.walkOffJustHappened){
     state.walkOffJustHappened = false;
@@ -2493,6 +2509,18 @@ function recordSeasonResult(league, championName){
     champion: championName === you.name
   };
   saveLeaderboardEntry(entry);
+  // Sync this drafted team's real season stat lines into the persistent
+  // cross-game performance leaderboard — a full season's worth in one go.
+  Object.values(roster).forEach(p=>{
+    if(!p || !p.id) return;
+    const stat = league.seasonStats && league.seasonStats[p.id];
+    if(!stat) return;
+    if(stat.isPitcher){
+      syncPlayerPerformance(p.id, p.name, true, { outs:stat.outs, er:stat.er, k:stat.k, bb:stat.bb, h:stat.h });
+    } else {
+      syncPlayerPerformance(p.id, p.name, false, { ab:stat.ab, h:stat.h, hr:stat.hr, rbi:stat.rbi, bb:stat.bb, k:stat.k, r:stat.r });
+    }
+  });
 }
 /* Champions mode arcade board: a running win/loss tally per team-year, shared
    across everyone, aggregated rather than one row per battle (keeps it light
@@ -2526,6 +2554,43 @@ async function loadHeadToHead(labelA, labelB){
     return { a: team_a, b: team_b, aWins:0, bWins:0 };
   }catch(e){ return { a: [labelA,labelB].sort()[0], b:[labelA,labelB].sort()[1], aWins:0, bWins:0 }; }
 }
+/* Draft frequency — only ever called from a genuine manual click on the pool
+   table's Draft button, never from CPU picks or Auto-Draft Rest, so this is
+   a clean read of what people actually choose to build with, not what an
+   algorithm filled in for them. */
+async function recordManualDraftPick(playerId, playerName){
+  if(!sb) return;
+  try{
+    const { data } = await sb.from('draft_picks').select('*').eq('player_id', playerId).maybeSingle();
+    const count = (data && data.pick_count ? data.pick_count : 0) + 1;
+    await sb.from('draft_picks').upsert({ player_id: playerId, player_name: playerName, pick_count: count, updated_at: new Date().toISOString() });
+  }catch(e){ console.warn('Could not update draft frequency stats (non-fatal, gameplay unaffected):', e); }
+}
+/* Real cross-game performance leaders — accumulates every drafted player's
+   actual stat line across every completed exhibition game and season anyone
+   plays, persisted so it survives across sessions and adds up over time. */
+async function syncPlayerPerformance(playerId, playerName, isPitcher, inc){
+  if(!sb || !playerId) return;
+  try{
+    const { data } = await sb.from('player_performance').select('*').eq('player_id', playerId).maybeSingle();
+    const cur = data || { player_id:playerId, player_name:playerName, is_pitcher:isPitcher,
+      ab:0,h:0,hr:0,rbi:0,bb:0,k:0,r:0, outs:0,er:0,p_k:0,p_bb:0,p_h:0, games:0 };
+    if(isPitcher){
+      cur.outs=(cur.outs||0)+(inc.outs||0); cur.er=(cur.er||0)+(inc.er||0);
+      cur.p_k=(cur.p_k||0)+(inc.k||0); cur.p_bb=(cur.p_bb||0)+(inc.bb||0); cur.p_h=(cur.p_h||0)+(inc.h||0);
+    } else {
+      cur.ab=(cur.ab||0)+(inc.ab||0); cur.h=(cur.h||0)+(inc.h||0); cur.hr=(cur.hr||0)+(inc.hr||0);
+      cur.rbi=(cur.rbi||0)+(inc.rbi||0); cur.bb=(cur.bb||0)+(inc.bb||0); cur.k=(cur.k||0)+(inc.k||0); cur.r=(cur.r||0)+(inc.r||0);
+    }
+    cur.games=(cur.games||0)+1;
+    await sb.from('player_performance').upsert({
+      player_id: playerId, player_name: playerName, is_pitcher: isPitcher,
+      ab:cur.ab, h:cur.h, hr:cur.hr, rbi:cur.rbi, bb:cur.bb, k:cur.k, r:cur.r,
+      outs:cur.outs, er:cur.er, p_k:cur.p_k, p_bb:cur.p_bb, p_h:cur.p_h,
+      games:cur.games, updated_at: new Date().toISOString()
+    });
+  }catch(e){ console.warn('Could not update player performance stats (non-fatal, gameplay unaffected):', e); }
+}
 async function bumpChampRecord(label, won){
   if(!sb) return;
   try{
@@ -2557,6 +2622,41 @@ function renderWorldSeriesTable(results){
     return `<tr><td class="tname">🏆 ${r.winner}</td><td>${r.wins_a}-${r.wins_b}</td><td>${r.team_a} vs ${r.team_b}</td><td>${r.games_played} games</td></tr>`;
   }).join('');
   return `<div class="leaderboard-list"><table class="leaderboard"><tr><th>Champion</th><th>Series</th><th>Matchup</th><th>Length</th></tr>${rows}</table></div>`;
+}
+async function loadDraftPicks(){
+  if(!sb) return null;
+  try{
+    const { data, error } = await sb.from('draft_picks').select('*').order('pick_count', { ascending:false }).limit(15);
+    if(error) throw error;
+    return data || [];
+  }catch(e){ console.warn('Could not load draft frequency stats (falls back to "not available" in the UI):', e); return null; }
+}
+function renderDraftPicksTable(picks){
+  if(!picks.length) return `<div class="lb-empty">Nobody's drafted anyone yet — go build a team!</div>`;
+  const rows = picks.map((p,i)=>`<tr><td>${i+1}</td><td class="tname">${p.player_name}</td><td>${p.pick_count}x</td></tr>`).join('');
+  return `<div class="leaderboard-list"><table class="leaderboard"><tr><th>#</th><th>Player</th><th>Times Drafted</th></tr>${rows}</table></div>`;
+}
+async function loadPerformanceLeaders(){
+  if(!sb) return null;
+  try{
+    const { data, error } = await sb.from('player_performance').select('*');
+    if(error) throw error;
+    return data || [];
+  }catch(e){ console.warn('Could not load performance leaders (falls back to "not available" in the UI):', e); return null; }
+}
+function renderBattingLeadersTable(rows){
+  const batters = rows.filter(r=>!r.is_pitcher && r.ab >= 20).map(r=>({...r, avg: r.h/r.ab}));
+  if(!batters.length) return `<div class="lb-empty">Not enough at-bats logged yet — play some real games.</div>`;
+  const byAvg = batters.slice().sort((a,b)=>b.avg-a.avg).slice(0,10);
+  const rowsHtml = byAvg.map((p,i)=>`<tr><td>${i+1}</td><td class="tname">${p.player_name}</td><td>.${String(Math.round(p.avg*1000)).padStart(3,'0')}</td><td>${p.hr}</td><td>${p.rbi}</td><td>${p.games}g</td></tr>`).join('');
+  return `<div class="leaderboard-list"><table class="leaderboard"><tr><th>#</th><th>Player</th><th>AVG</th><th>HR</th><th>RBI</th><th>Sample</th></tr>${rowsHtml}</table></div>`;
+}
+function renderPitchingLeadersTable(rows){
+  const pitchers = rows.filter(r=>r.is_pitcher && r.outs >= 15).map(r=>({...r, era: r.outs>0 ? (r.er*27)/r.outs : 0}));
+  if(!pitchers.length) return `<div class="lb-empty">Not enough innings logged yet — play some real games.</div>`;
+  const byEra = pitchers.slice().sort((a,b)=>a.era-b.era).slice(0,10);
+  const rowsHtml = byEra.map((p,i)=>`<tr><td>${i+1}</td><td class="tname">${p.player_name}</td><td>${p.era.toFixed(2)}</td><td>${p.p_k}</td><td>${Math.floor(p.outs/3)}.${p.outs%3} IP</td></tr>`).join('');
+  return `<div class="leaderboard-list"><table class="leaderboard"><tr><th>#</th><th>Player</th><th>ERA</th><th>K</th><th>Sample</th></tr>${rowsHtml}</table></div>`;
 }
 function renderChampRecordsTable(recs, limit){
   const sorted = recs.slice().sort((a,b)=>{
@@ -2594,7 +2694,9 @@ async function loadLeaderboardEntries(){
 }
 async function renderLeaderboardView(){
   leaderboardWrap.innerHTML = '<div class="lb-empty">Loading…</div>';
-  const [entries, champRecs, wsResults] = await Promise.all([loadLeaderboardEntries(), loadChampRecords(), loadWorldSeriesResults()]);
+  const [entries, champRecs, wsResults, draftPicks, perfRows] = await Promise.all([
+    loadLeaderboardEntries(), loadChampRecords(), loadWorldSeriesResults(), loadDraftPicks(), loadPerformanceLeaders()
+  ]);
 
   let champSectionHtml = '';
   if(champRecs === null){
@@ -2615,12 +2717,34 @@ async function renderLeaderboardView(){
   }
   champSectionHtml += wsSectionHtml;
 
+  // Draft-frequency and real cross-game performance leaders — Hall of Fame
+  // Game specific, since Champions/World Series teams are auto-filled, not drafted.
+  let draftSectionHtml = '';
+  if(draftPicks === null){
+    draftSectionHtml = `<h3 style="margin:14px 0 8px;font-family:'Courier New',monospace;font-size:0.85rem;letter-spacing:1.5px;text-transform:uppercase;">🧢 Most Drafted Hall of Famers</h3><div class="lb-empty">Not available right now.</div>`;
+  } else {
+    draftSectionHtml = `<h3 style="margin:14px 0 8px;font-family:'Courier New',monospace;font-size:0.85rem;letter-spacing:1.5px;text-transform:uppercase;">🧢 Most Drafted Hall of Famers</h3>
+      <p class="hint" style="margin:0 0 8px;">Counts genuine manual picks only — Auto-Draft Rest and CPU picks don't count toward this.</p>
+      ${renderDraftPicksTable(draftPicks)}`;
+  }
+
+  let perfSectionHtml = '';
+  if(perfRows === null){
+    perfSectionHtml = `<h3 style="margin:14px 0 8px;font-family:'Courier New',monospace;font-size:0.85rem;letter-spacing:1.5px;text-transform:uppercase;">📈 Real Season Leaders</h3><div class="lb-empty">Not available right now.</div>`;
+  } else {
+    perfSectionHtml = `<h3 style="margin:14px 0 8px;font-family:'Courier New',monospace;font-size:0.85rem;letter-spacing:1.5px;text-transform:uppercase;">📈 Real Season Leaders</h3>
+      <p class="hint" style="margin:0 0 8px;">Every real exhibition and season game anyone's actually played, accumulated across everyone. Minimum sample size applies.</p>
+      <h4 class="pos-rank" style="margin:10px 0 6px;">Batting (AVG)</h4>${renderBattingLeadersTable(perfRows)}
+      <h4 class="pos-rank" style="margin:14px 0 6px;">Pitching (ERA)</h4>${renderPitchingLeadersTable(perfRows)}`;
+  }
+  draftSectionHtml += perfSectionHtml;
+
   if(entries===null){
-    leaderboardWrap.innerHTML = champSectionHtml + `<div class="lb-empty" style="margin-top:16px;">Hall of Fame Game leaderboard storage isn't available right now.</div>`;
+    leaderboardWrap.innerHTML = champSectionHtml + draftSectionHtml + `<div class="lb-empty" style="margin-top:16px;">Hall of Fame Game leaderboard storage isn't available right now.</div>`;
     return;
   }
   if(!entries.length){
-    leaderboardWrap.innerHTML = champSectionHtml + `<div class="lb-empty" style="margin-top:16px;">No Hall of Fame Game seasons completed yet — simulate a season to be the first on the board.</div>`;
+    leaderboardWrap.innerHTML = champSectionHtml + draftSectionHtml + `<div class="lb-empty" style="margin-top:16px;">No Hall of Fame Game seasons completed yet — simulate a season to be the first on the board.</div>`;
     return;
   }
 
@@ -2675,7 +2799,7 @@ async function renderLeaderboardView(){
   const recentHtml = `<h3 style="margin:20px 0 8px;font-family:'Courier New',monospace;font-size:0.85rem;letter-spacing:1.5px;text-transform:uppercase;">Recent Seasons</h3>
     <div class="leaderboard-list"><table class="leaderboard"><tr><th>Team</th><th>Record</th><th>PCT</th><th>Date</th></tr>${recentRows}</table></div>`;
 
-  leaderboardWrap.innerHTML = champSectionHtml + standingsHtml + greatestHtml + recentHtml;
+  leaderboardWrap.innerHTML = champSectionHtml + draftSectionHtml + standingsHtml + greatestHtml + recentHtml;
 }
 
 leaderboardNavBtn.addEventListener('click', ()=>{
