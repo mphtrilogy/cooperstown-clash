@@ -2027,10 +2027,14 @@ function renderAll(rollInfo){
     viewSeasonResultsBtn.classList.remove('hidden');
     viewSeasonResultsBtn.onclick = ()=>{ renderSeasonView(state.league, championName); };
   }
-  // A plain one-off exhibition game (not season, not Champions/World Series) —
+  if(state.isHofPostseasonGame && state.over && !state._recorded){
+    state._recorded = true;
+    handleHofPostseasonGameEnd();
+  }
+  // A plain one-off exhibition game (not season, not postseason, not Champions/World Series) —
   // your drafted team is always `home` here. Sync that single game's real
   // stat line into the same persistent performance leaderboard.
-  if(!state.isChampionship && !state.isChampsMode && state.over && !state._exhibitionRecorded){
+  if(!state.isChampionship && !state.isHofPostseasonGame && !state.isChampsMode && state.over && !state._exhibitionRecorded){
     state._exhibitionRecorded = true;
     state.home.lineup.forEach(b=>{
       if(!b.id) return;
@@ -2041,7 +2045,7 @@ function renderAll(rollInfo){
       syncPlayerPerformance(p.id, p.name, true, { outs:p.stats.outs, er:p.stats.er, k:p.stats.k, bb:p.stats.bb, h:p.stats.h });
     });
   }
-  rematchBtn.classList.toggle('hidden', !(state.over && !state.isChampionship && !state.isWorldSeriesGame));
+  rematchBtn.classList.toggle('hidden', !(state.over && !state.isChampionship && !state.isWorldSeriesGame && !state.isHofPostseasonGame));
   if(state.walkOffJustHappened){
     state.walkOffJustHappened = false;
     triggerBigPlay(null, 'WALKOFF');
@@ -2089,12 +2093,16 @@ function handleSeriesGameEnd(){
 }
 
 document.getElementById('nextSeriesGameBtn').addEventListener('click', ()=>{
-  hideAllTopViews();
-  showView(document.getElementById('champLineupView'));
   document.getElementById('seriesStatusPanel').classList.add('hidden');
-  mastheadTitle.textContent = `World Series — Game ${worldSeries.gameNum}`;
-  mastheadSub.textContent = `${champA.label} vs ${champB.label} — Series ${worldSeries.winsA}-${worldSeries.winsB}`;
-  renderChampLineupScreen();
+  if(worldSeries && !worldSeries.done){
+    hideAllTopViews();
+    showView(document.getElementById('champLineupView'));
+    mastheadTitle.textContent = `World Series — Game ${worldSeries.gameNum}`;
+    mastheadSub.textContent = `${champA.label} vs ${champB.label} — Series ${worldSeries.winsA}-${worldSeries.winsB}`;
+    renderChampLineupScreen();
+  } else if(hofPostseason && !hofPostseason.done){
+    startHofPostseasonGame();
+  }
 });
 
 async function recordWorldSeriesResult(labelA, labelB, winnerLabel, winsA, winsB, gamesPlayed){
@@ -2237,6 +2245,7 @@ function resetToDraft(){
   document.getElementById('nextSeriesGameBtn').classList.add('hidden');
   document.getElementById('seriesStatusPanel').classList.add('hidden');
   worldSeries = null;
+  hofPostseason = null;
   benchPanel.classList.remove('hidden');
   document.getElementById('champBullpenPanel').classList.add('hidden');
   currentLeague = null;
@@ -2253,6 +2262,7 @@ function goHome(){
   document.getElementById('nextSeriesGameBtn').classList.add('hidden');
   document.getElementById('seriesStatusPanel').classList.add('hidden');
   worldSeries = null;
+  hofPostseason = null;
   autodraftRow.classList.add('hidden');
   viewSeasonResultsBtn.classList.add('hidden'); rematchBtn.classList.add('hidden');
   teamNameInput.disabled=false; beginDraftBtn.disabled=false; teamNameInput.value='';
@@ -2427,35 +2437,106 @@ function showSeasonRegularResults(league){
   }
 }
 
+/* HOF Season Mode postseason — same best-of-7, real 2-3-2 pattern as World
+   Series mode, same "no instant-resolve-the-whole-thing" rule when you're
+   actually a finalist. If you didn't make it, the CPU-vs-CPU series still
+   plays out as a real best-of-7 (just simmed instantly since there's nothing
+   to watch), rather than being decided by one coin-flip game like before. */
+let hofPostseason = null; // {league, teamA, teamB, winsA, winsB, gameNum, results, done, champLabel}
+
 function startChampionship(league){
   const top2 = league.teams.slice(0,2);
+  hofPostseason = { league, teamA:top2[0], teamB:top2[1], winsA:0, winsB:0, gameNum:1, results:[], done:false };
   const youFinalist = top2.find(t=>t.isYou);
   if(youFinalist){
-    const other = top2.find(t=>!t.isYou);
-    const homeTeamState = buildGameTeamFromRoster(youFinalist.roster, youFinalist.name, youFinalist.lineupOrder);
-    const awayTeamState = buildGameTeamFromRoster(other.roster, other.name, other.lineupOrder);
-    state = { away:awayTeamState, home:homeTeamState, inning:1, half:'top', outs:0, bases:[null,null,null],
-      awayIdx:0, homeIdx:0, log:[], over:false, started:false, autoManageBoth:false, isChampionship:true, _recorded:false, league };
-    halfInningStartScore = {away:0, home:0};
-    viewSeasonResultsBtn.classList.add('hidden');
-    seasonView.classList.add('hidden');
-    document.getElementById('gameOverBanner').classList.add('hidden');
-  boxScorePanel.classList.add('hidden'); boxScoreBtn.textContent = '📋 Box Score';
-    showView(gameView);
-    renderAll(); renderBenchPanel();
+    startHofPostseasonGame();
   } else {
-    const home = top2[0], away = top2[1];
-    const homeTeamState = buildGameTeamFromRoster(home.roster, home.name, home.lineupOrder);
-    const awayTeamState = buildGameTeamFromRoster(away.roster, away.name, away.lineupOrder);
-    state = { away:awayTeamState, home:homeTeamState, inning:1, half:'top', outs:0, bases:[null,null,null],
-      awayIdx:0, homeIdx:0, log:[], over:false, started:false, autoManageBoth:true, isChampionship:true };
-    halfInningStartScore = {away:0, home:0};
-    simFullGame();
-    accumulateSeasonStats(league, awayTeamState);
-    accumulateSeasonStats(league, homeTeamState);
-    const championName = homeTeamState.score>awayTeamState.score ? home.name : away.name;
-    recordSeasonResult(league, championName);
-    renderSeasonView(league, championName);
+    seasonChampWrap.innerHTML = `<div class="pick-tracker">Regular season complete. Simulating the postseason (best of 7)...</div>`;
+    while(!hofPostseason.done){ simHofPostseasonGameInstant(); }
+    renderSeasonView(league, hofPostseason.champLabel);
+  }
+}
+
+function startHofPostseasonGame(){
+  const hostsIsA = WS_HOME_PATTERN[hofPostseason.gameNum-1] === 'A';
+  const awayTeam = hostsIsA ? hofPostseason.teamB : hofPostseason.teamA;
+  const homeTeam = hostsIsA ? hofPostseason.teamA : hofPostseason.teamB;
+  const awayTeamState = buildGameTeamFromRoster(awayTeam.roster, awayTeam.name, awayTeam.lineupOrder);
+  const homeTeamState = buildGameTeamFromRoster(homeTeam.roster, homeTeam.name, homeTeam.lineupOrder);
+  state = { away:awayTeamState, home:homeTeamState, inning:1, half:'top', outs:0, bases:[null,null,null],
+    awayIdx:0, homeIdx:0, log:[], over:false, started:false, autoManageBoth:false,
+    isChampionship:false, isHofPostseasonGame:true, _recorded:false, league: hofPostseason.league };
+  halfInningStartScore = {away:0, home:0};
+  viewSeasonResultsBtn.classList.add('hidden');
+  seasonView.classList.add('hidden');
+  document.getElementById('gameOverBanner').classList.add('hidden');
+  document.getElementById('seriesStatusPanel').classList.add('hidden');
+  document.getElementById('nextSeriesGameBtn').classList.add('hidden');
+  boxScorePanel.classList.add('hidden'); boxScoreBtn.textContent = '📋 Box Score';
+  mastheadTitle.textContent = `Postseason — Game ${hofPostseason.gameNum}`;
+  mastheadSub.textContent = `${awayTeam.name} at ${homeTeam.name} — Series ${hofPostseason.winsA}-${hofPostseason.winsB}`;
+  showView(gameView);
+  renderAll(); renderBenchPanel();
+}
+
+/* CPU-vs-CPU postseason path — no one's watching, so each game resolves
+   instantly, but it's still a genuine best-of-7 with real stats accumulated
+   per game, not a single coin-flip. */
+function simHofPostseasonGameInstant(){
+  const hostsIsA = WS_HOME_PATTERN[hofPostseason.gameNum-1] === 'A';
+  const awayTeam = hostsIsA ? hofPostseason.teamB : hofPostseason.teamA;
+  const homeTeam = hostsIsA ? hofPostseason.teamA : hofPostseason.teamB;
+  const awayTeamState = buildGameTeamFromRoster(awayTeam.roster, awayTeam.name, awayTeam.lineupOrder);
+  const homeTeamState = buildGameTeamFromRoster(homeTeam.roster, homeTeam.name, homeTeam.lineupOrder);
+  state = { away:awayTeamState, home:homeTeamState, inning:1, half:'top', outs:0, bases:[null,null,null],
+    awayIdx:0, homeIdx:0, log:[], over:false, started:false, autoManageBoth:true, isChampionship:false };
+  halfInningStartScore = {away:0, home:0};
+  simFullGame();
+  accumulateSeasonStats(hofPostseason.league, awayTeamState);
+  accumulateSeasonStats(hofPostseason.league, homeTeamState);
+  const winnerName = homeTeamState.score>awayTeamState.score ? homeTeam.name : awayTeam.name;
+  const winnerIsTeamA = winnerName === hofPostseason.teamA.name;
+  if(winnerIsTeamA) hofPostseason.winsA++; else hofPostseason.winsB++;
+  hofPostseason.results.push({ game:hofPostseason.gameNum, away:awayTeam.name, home:homeTeam.name, awayScore:awayTeamState.score, homeScore:homeTeamState.score, winner:winnerName });
+  if(hofPostseason.winsA>=4 || hofPostseason.winsB>=4){
+    hofPostseason.done = true;
+    hofPostseason.champLabel = hofPostseason.winsA>hofPostseason.winsB ? hofPostseason.teamA.name : hofPostseason.teamB.name;
+    recordSeasonResult(hofPostseason.league, hofPostseason.champLabel);
+  } else {
+    hofPostseason.gameNum++;
+  }
+}
+
+function handleHofPostseasonGameEnd(){
+  if(!hofPostseason || hofPostseason.done) return;
+  accumulateSeasonStats(hofPostseason.league, state.away);
+  accumulateSeasonStats(hofPostseason.league, state.home);
+  const winnerIsAway = state.away.score > state.home.score;
+  const winnerName = winnerIsAway ? state.away.name : state.home.name;
+  const winnerIsTeamA = winnerName === hofPostseason.teamA.name;
+  if(winnerIsTeamA) hofPostseason.winsA++; else hofPostseason.winsB++;
+  hofPostseason.results.push({ game:hofPostseason.gameNum, away:state.away.name, home:state.home.name, awayScore:state.away.score, homeScore:state.home.score, winner:winnerName });
+
+  const seriesOver = hofPostseason.winsA >= 4 || hofPostseason.winsB >= 4;
+  const panel = document.getElementById('seriesStatusPanel');
+  const nextBtn = document.getElementById('nextSeriesGameBtn');
+  panel.classList.remove('hidden');
+
+  if(seriesOver){
+    hofPostseason.done = true;
+    const champLabel = hofPostseason.winsA>hofPostseason.winsB ? hofPostseason.teamA.name : hofPostseason.teamB.name;
+    hofPostseason.champLabel = champLabel;
+    panel.classList.add('champ');
+    panel.innerHTML = `<div class="sp-title">Postseason Champion</div><div class="sp-score">🏆 ${champLabel}</div><div class="sp-games">Series: ${hofPostseason.teamA.name} ${hofPostseason.winsA} – ${hofPostseason.winsB} ${hofPostseason.teamB.name}</div>`;
+    nextBtn.classList.add('hidden');
+    recordSeasonResult(hofPostseason.league, champLabel);
+    viewSeasonResultsBtn.classList.remove('hidden');
+    viewSeasonResultsBtn.onclick = ()=>{ renderSeasonView(hofPostseason.league, champLabel); };
+  } else {
+    panel.classList.remove('champ');
+    panel.innerHTML = `<div class="sp-title">Postseason</div><div class="sp-score">${hofPostseason.teamA.name} ${hofPostseason.winsA} – ${hofPostseason.winsB} ${hofPostseason.teamB.name}</div><div class="sp-games">Game ${hofPostseason.gameNum} final: ${state.away.name} ${state.away.score}, ${state.home.name} ${state.home.score}</div>`;
+    hofPostseason.gameNum++;
+    nextBtn.classList.remove('hidden');
   }
 }
 
