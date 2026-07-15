@@ -328,6 +328,13 @@
       background:var(--paper); padding:3px 0 2px;
     }
     body.compact-header .top-nav-row button{ padding:3px 6px; font-size:0.58rem; }
+    /* The actual score is the one thing that always needs to be visible —
+       pin it right below the compact header/nav stack so it never scrolls
+       out of view, no matter how far down the at-bat log you've scrolled. */
+    body.compact-header .scorebug{
+      position:sticky; top:50px; z-index:28; margin-bottom:6px;
+      font-size:0.66rem; gap:6px; padding:5px 8px;
+    }
     /* The full per-inning scoreboard is the single biggest thing standing between
        loading the page and seeing the diamond on a phone. scorebug already covers
        score/inning/outs compactly, so hide the big table on small screens. */
