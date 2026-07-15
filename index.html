@@ -215,6 +215,16 @@
   .game-over-banner .gob-winner{ font-size:1.4rem; font-weight:bold; font-family:'Playfair Display',Georgia,serif; margin:2px 0; }
   .game-over-banner .gob-score{ font-size:0.95rem; letter-spacing:1px; }
 
+  .series-status-panel{
+    text-align:center; background:var(--ink); color:var(--paper); border-radius:8px;
+    padding:12px 18px; margin-bottom:12px; font-family:'Courier New',monospace;
+  }
+  .series-status-panel .sp-title{ font-size:0.68rem; letter-spacing:3px; text-transform:uppercase; color:var(--gold); }
+  .series-status-panel .sp-score{ font-size:1.5rem; font-weight:bold; margin:4px 0; }
+  .series-status-panel .sp-games{ font-size:0.72rem; opacity:0.85; line-height:1.6; }
+  .series-status-panel.champ{ background:var(--gold); color:var(--ink); }
+  .series-status-panel.champ .sp-title{ color:var(--away); }
+
   @keyframes viewFadeIn{
     0%{ opacity:0; transform: translateY(22px) scale(0.97); }
     60%{ opacity:1; }
@@ -568,6 +578,11 @@
     <div class="lineup-setup-card" style="max-width:640px;">
       <h3>Pick Two Championship Teams</h3>
       <p class="hint">Each roster is auto-filled from that team's actual real-life season — best real starter at each position, real starting pitcher, real bench and bullpen. No drafting.</p>
+      <div class="controls" style="justify-content:center;margin-bottom:10px;">
+        <button class="big" id="champModeExhibitionBtn">Exhibition (1 Game)</button>
+        <button class="big secondary" id="champModeSeriesBtn">🏆 World Series (Best of 7)</button>
+      </div>
+      <div id="champModeHint" class="pos-rank" style="text-align:center;margin-bottom:10px;">Exhibition selected — one game, settled right now.</div>
       <div class="champ-picker-row">
         <div>
           <label class="pos-rank">Team A (Away)</label>
@@ -723,12 +738,15 @@
       </div>
     </div>
 
+    <div class="series-status-panel hidden" id="seriesStatusPanel"></div>
+
     <div class="controls">
       <button class="big" id="stepBtn">Next At-Bat</button>
       <button class="big" id="simInningBtn">Sim Half-Inning</button>
       <button class="big" id="simGameBtn">Sim Full Game</button>
       <button class="big secondary" id="boxScoreBtn">📋 Box Score</button>
       <button class="big secondary hidden" id="rematchBtn">▶ Play Again (Rematch)</button>
+      <button class="big hidden" id="nextSeriesGameBtn">▶ Play Next Game</button>
       <button class="big secondary" id="newDraftBtn">New Draft</button>
       <button class="big secondary hidden" id="viewSeasonResultsBtn">🏆 View Final Standings</button>
     </div>
@@ -2007,7 +2025,7 @@ function renderAll(rollInfo){
     viewSeasonResultsBtn.classList.remove('hidden');
     viewSeasonResultsBtn.onclick = ()=>{ renderSeasonView(state.league, championName); };
   }
-  rematchBtn.classList.toggle('hidden', !(state.over && !state.isChampionship));
+  rematchBtn.classList.toggle('hidden', !(state.over && !state.isChampionship && !state.isWorldSeriesGame));
   if(state.walkOffJustHappened){
     state.walkOffJustHappened = false;
     triggerBigPlay(null, 'WALKOFF');
@@ -2018,8 +2036,59 @@ function renderAll(rollInfo){
     const winner = winnerIsAway ? state.away : state.home;
     const loser = winnerIsAway ? state.home : state.away;
     recordChampBattleResult(winner.name, loser.name);
+    if(state.isWorldSeriesGame) handleSeriesGameEnd();
   }
   checkGameOverBanner();
+}
+
+function handleSeriesGameEnd(){
+  if(!worldSeries || worldSeries.done) return;
+  const winnerIsAway = state.away.score > state.home.score;
+  const winnerLabel = winnerIsAway ? state.away.name : state.home.name;
+  const winnerIsTeamA = winnerLabel === champA.label;
+  if(winnerIsTeamA) worldSeries.winsA++; else worldSeries.winsB++;
+  worldSeries.results.push({ game: worldSeries.gameNum, awayLabel: state.away.name, homeLabel: state.home.name,
+    awayScore: state.away.score, homeScore: state.home.score, winner: winnerLabel });
+
+  const seriesOver = worldSeries.winsA >= 4 || worldSeries.winsB >= 4;
+  const panel = document.getElementById('seriesStatusPanel');
+  const nextBtn = document.getElementById('nextSeriesGameBtn');
+  panel.classList.remove('hidden');
+
+  if(seriesOver){
+    worldSeries.done = true;
+    const champLabel = worldSeries.winsA > worldSeries.winsB ? champA.label : champB.label;
+    worldSeries.champLabel = champLabel;
+    panel.classList.add('champ');
+    panel.innerHTML = `<div class="sp-title">World Series Champion</div><div class="sp-score">🏆 ${champLabel}</div><div class="sp-games">Series: ${champA.label} ${worldSeries.winsA} – ${worldSeries.winsB} ${champB.label}</div>`;
+    nextBtn.classList.add('hidden');
+    rematchBtn.classList.remove('hidden');
+    recordWorldSeriesResult(champA.label, champB.label, champLabel, worldSeries.winsA, worldSeries.winsB, worldSeries.gameNum);
+  } else {
+    panel.classList.remove('champ');
+    panel.innerHTML = `<div class="sp-title">World Series</div><div class="sp-score">${champA.label} ${worldSeries.winsA} – ${worldSeries.winsB} ${champB.label}</div><div class="sp-games">Game ${worldSeries.gameNum} final: ${state.away.name} ${state.away.score}, ${state.home.name} ${state.home.score}</div>`;
+    worldSeries.gameNum++;
+    nextBtn.classList.remove('hidden');
+  }
+}
+
+document.getElementById('nextSeriesGameBtn').addEventListener('click', ()=>{
+  hideAllTopViews();
+  showView(document.getElementById('champLineupView'));
+  document.getElementById('seriesStatusPanel').classList.add('hidden');
+  mastheadTitle.textContent = `World Series — Game ${worldSeries.gameNum}`;
+  mastheadSub.textContent = `${champA.label} vs ${champB.label} — Series ${worldSeries.winsA}-${worldSeries.winsB}`;
+  renderChampLineupScreen();
+});
+
+async function recordWorldSeriesResult(labelA, labelB, winnerLabel, winsA, winsB, gamesPlayed){
+  try{
+    if(!sb) return;
+    await sb.from('world_series_results').insert({
+      team_a: labelA, team_b: labelB, winner: winnerLabel,
+      wins_a: winsA, wins_b: winsB, games_played: gamesPlayed
+    });
+  }catch(e){ console.warn('Could not save World Series result (non-fatal):', e); }
 }
 
 /* A real box score — the traditional stat table, separate from the informal
@@ -2132,7 +2201,10 @@ function showInningTicker(teamKey, inning, half, runsThisHalf){
 simInningBtn.addEventListener('click', ()=>{ simHalfInning(); renderAll(); if(!state.isChampsMode) renderBenchPanel(); else renderChampBullpenPanel(); });
 simGameBtn.addEventListener('click', ()=>{ simFullGame(); renderAll(); if(!state.isChampsMode) renderBenchPanel(); else renderChampBullpenPanel(); });
 rematchBtn.addEventListener('click', ()=>{
-  if(state.isChampsMode){ document.getElementById('champPlayBallBtn').click(); } else { prepareGameFromDraft(); }
+  if(state.isChampsMode){
+    worldSeries = null; // a rematch after a finished series is a fresh standalone game, not a continuation
+    document.getElementById('champPlayBallBtn').click();
+  } else { prepareGameFromDraft(); }
 });
 newDraftBtn.addEventListener('click', ()=>{ resetToDraft(); showModeSelect(); });
 backToLineupBtn.addEventListener('click', ()=>{ resetToDraft(); showModeSelect(); });
@@ -2146,6 +2218,9 @@ function resetToDraft(){
   autodraftRow.classList.add('hidden');
   viewSeasonResultsBtn.classList.add('hidden');
   rematchBtn.classList.add('hidden');
+  document.getElementById('nextSeriesGameBtn').classList.add('hidden');
+  document.getElementById('seriesStatusPanel').classList.add('hidden');
+  worldSeries = null;
   benchPanel.classList.remove('hidden');
   document.getElementById('champBullpenPanel').classList.add('hidden');
   currentLeague = null;
@@ -2159,6 +2234,9 @@ function goHome(){
   document.getElementById('gameOverBanner').classList.add('hidden');
   boxScorePanel.classList.add('hidden'); boxScoreBtn.textContent = '📋 Box Score';
   document.getElementById('champBullpenPanel').classList.add('hidden');
+  document.getElementById('nextSeriesGameBtn').classList.add('hidden');
+  document.getElementById('seriesStatusPanel').classList.add('hidden');
+  worldSeries = null;
   autodraftRow.classList.add('hidden');
   viewSeasonResultsBtn.classList.add('hidden'); rematchBtn.classList.add('hidden');
   teamNameInput.disabled=false; beginDraftBtn.disabled=false; teamNameInput.value='';
@@ -2465,6 +2543,21 @@ async function loadChampRecords(){
     return (data || []).map(r => ({ label: r.label, wins: r.wins, losses: r.losses }));
   }catch(e){ console.warn('Could not load the Champions arcade board (falls back to "not available" in the UI):', e); return null; }
 }
+async function loadWorldSeriesResults(){
+  if(!sb) return null;
+  try{
+    const { data, error } = await sb.from('world_series_results').select('*').order('created_at', { ascending:false }).limit(50);
+    if(error) throw error;
+    return data || [];
+  }catch(e){ console.warn('Could not load World Series results (falls back to "not available" in the UI):', e); return null; }
+}
+function renderWorldSeriesTable(results){
+  if(!results.length) return `<div class="lb-empty">No World Series played yet — be the first to win one!</div>`;
+  const rows = results.map(r=>{
+    return `<tr><td class="tname">🏆 ${r.winner}</td><td>${r.wins_a}-${r.wins_b}</td><td>${r.team_a} vs ${r.team_b}</td><td>${r.games_played} games</td></tr>`;
+  }).join('');
+  return `<div class="leaderboard-list"><table class="leaderboard"><tr><th>Champion</th><th>Series</th><th>Matchup</th><th>Length</th></tr>${rows}</table></div>`;
+}
 function renderChampRecordsTable(recs, limit){
   const sorted = recs.slice().sort((a,b)=>{
     const wpA = a.wins/((a.wins+a.losses)||1), wpB = b.wins/((b.wins+b.losses)||1);
@@ -2501,7 +2594,7 @@ async function loadLeaderboardEntries(){
 }
 async function renderLeaderboardView(){
   leaderboardWrap.innerHTML = '<div class="lb-empty">Loading…</div>';
-  const [entries, champRecs] = await Promise.all([loadLeaderboardEntries(), loadChampRecords()]);
+  const [entries, champRecs, wsResults] = await Promise.all([loadLeaderboardEntries(), loadChampRecords(), loadWorldSeriesResults()]);
 
   let champSectionHtml = '';
   if(champRecs === null){
@@ -2511,6 +2604,16 @@ async function renderLeaderboardView(){
       <p class="hint" style="margin:0 0 8px;">Every Cooperstown Clash battle anyone's played, tallied by team-year. Beat the record and climb the board.</p>
       ${renderChampRecordsTable(champRecs, 15)}`;
   }
+
+  let wsSectionHtml = '';
+  if(wsResults === null){
+    wsSectionHtml = `<h3 style="margin:14px 0 8px;font-family:'Courier New',monospace;font-size:0.85rem;letter-spacing:1.5px;text-transform:uppercase;">🏆 World Series Champions</h3><div class="lb-empty">Not available right now.</div>`;
+  } else {
+    wsSectionHtml = `<h3 style="margin:14px 0 8px;font-family:'Courier New',monospace;font-size:0.85rem;letter-spacing:1.5px;text-transform:uppercase;">🏆 World Series Champions</h3>
+      <p class="hint" style="margin:0 0 8px;">Every completed best-of-7 series, most recent first. The real deal — no instant-sim shortcut, every game actually played out.</p>
+      ${renderWorldSeriesTable(wsResults)}`;
+  }
+  champSectionHtml += wsSectionHtml;
 
   if(entries===null){
     leaderboardWrap.innerHTML = champSectionHtml + `<div class="lb-empty" style="margin-top:16px;">Hall of Fame Game leaderboard storage isn't available right now.</div>`;
@@ -2697,6 +2800,26 @@ backToModeBtn.addEventListener('click', showModeSelect);
 /* ---- Champions lineup editing: mirrors the HOF lineup screen, doubled for both sides ---- */
 let champA = null, champB = null; // {roster, order, starterSlot, label}
 
+/* ---- World Series mode: best-of-7, real 2-3-2 home-field pattern, no
+   "auto-resolve the whole series" shortcut — you always advance one game
+   at a time, whether you play it out or hit Sim Full Game for that game. ---- */
+let champSeriesMode = false; // false = Exhibition, true = World Series
+let worldSeries = null; // {yearA, yearB, winsA, winsB, gameNum, results:[], done, champLabel}
+const WS_HOME_PATTERN = ['B','B','A','A','A','B','B']; // which side hosts each game, games 1-7
+
+document.getElementById('champModeExhibitionBtn').addEventListener('click', ()=>{
+  champSeriesMode = false;
+  document.getElementById('champModeExhibitionBtn').classList.remove('secondary');
+  document.getElementById('champModeSeriesBtn').classList.add('secondary');
+  document.getElementById('champModeHint').textContent = 'Exhibition selected — one game, settled right now.';
+});
+document.getElementById('champModeSeriesBtn').addEventListener('click', ()=>{
+  champSeriesMode = true;
+  document.getElementById('champModeSeriesBtn').classList.remove('secondary');
+  document.getElementById('champModeExhibitionBtn').classList.add('secondary');
+  document.getElementById('champModeHint').textContent = 'World Series selected — best of 7, real 2-3-2 home-field pattern. First to 4 wins takes it.';
+});
+
 function buildChampSide(year){
   const teamData = CHAMPION_TEAMS[year];
   const built = autoFillChampsRoster(teamData.roster.slice(), `${year} ${teamData.teamName}`);
@@ -2778,10 +2901,15 @@ function renderChampLineupScreen(){
 startChampBattleBtn.addEventListener('click', ()=>{
   champA = buildChampSide(champYearA.value);
   champB = buildChampSide(champYearB.value);
+  if(champSeriesMode){
+    worldSeries = { yearA: champYearA.value, yearB: champYearB.value, winsA:0, winsB:0, gameNum:1, results:[], done:false };
+  } else {
+    worldSeries = null;
+  }
   hideAllTopViews();
   showView(document.getElementById('champLineupView'));
   mastheadTitle.textContent = 'Set Your Lineups';
-  mastheadSub.textContent = `${champA.label} vs ${champB.label}`;
+  mastheadSub.textContent = champSeriesMode ? `World Series: ${champA.label} vs ${champB.label}` : `${champA.label} vs ${champB.label}`;
   renderChampLineupScreen();
 });
 
@@ -2803,23 +2931,39 @@ document.getElementById('champBackToPickBtn').addEventListener('click', ()=>{
 });
 
 document.getElementById('champPlayBallBtn').addEventListener('click', ()=>{
-  const rosterA = rosterWithStarter(champA.roster, champA.starterSlot);
-  const rosterB = rosterWithStarter(champB.roster, champB.starterSlot);
-  const away = buildGameTeamFromRoster(rosterA, champA.label, champA.order);
-  const home = buildGameTeamFromRoster(rosterB, champB.label, champB.order);
+  // In series mode, home field follows a real 2-3-2 pattern rather than
+  // always being fixed to Team B — figure out who's actually hosting this game.
+  let awaySide = champA, homeSide = champB, awayLabel = champA.label, homeLabel = champB.label;
+  if(worldSeries){
+    const hostsIsA = WS_HOME_PATTERN[worldSeries.gameNum-1] === 'A';
+    awaySide = hostsIsA ? champB : champA;
+    homeSide = hostsIsA ? champA : champB;
+    awayLabel = awaySide.label; homeLabel = homeSide.label;
+  }
+  const rosterA = rosterWithStarter(awaySide.roster, awaySide.starterSlot);
+  const rosterB = rosterWithStarter(homeSide.roster, homeSide.starterSlot);
+  const away = buildGameTeamFromRoster(rosterA, awayLabel, awaySide.order);
+  const home = buildGameTeamFromRoster(rosterB, homeLabel, homeSide.order);
   state = { away, home, inning:1, half:'top', outs:0, bases:[null,null,null],
-    awayIdx:0, homeIdx:0, log:[], over:false, started:false, autoManageBoth:true, isChampionship:false, isChampsMode:true };
+    awayIdx:0, homeIdx:0, log:[], over:false, started:false, autoManageBoth:true, isChampionship:false,
+    isChampsMode:true, isWorldSeriesGame: !!worldSeries };
   halfInningStartScore = {away:0, home:0};
   benchPanel.classList.add('hidden');
   document.getElementById('champBullpenPanel').classList.remove('hidden');
   viewSeasonResultsBtn.classList.add('hidden');
   rematchBtn.classList.add('hidden');
+  document.getElementById('nextSeriesGameBtn').classList.add('hidden');
   const earliestYear = Math.min(parseInt(champYearA.value), parseInt(champYearB.value));
   document.getElementById('fieldCard').classList.toggle('vintage-era', earliestYear < 1960);
   document.getElementById('gameOverBanner').classList.add('hidden');
   boxScorePanel.classList.add('hidden'); boxScoreBtn.textContent = '📋 Box Score';
-  mastheadTitle.textContent = `${champYearA.value} vs ${champYearB.value}`;
-  mastheadSub.innerHTML = `${champA.label} vs ${champB.label} — Cooperstown Clash` + (earliestYear<1960 ? ` <span class="era-badge">Vintage Era</span>` : '');
+  if(worldSeries){
+    mastheadTitle.textContent = `World Series Game ${worldSeries.gameNum}`;
+    mastheadSub.innerHTML = `${awayLabel} at ${homeLabel} — Series ${worldSeries.winsA}-${worldSeries.winsB}` + (earliestYear<1960 ? ` <span class="era-badge">Vintage Era</span>` : '');
+  } else {
+    mastheadTitle.textContent = `${champYearA.value} vs ${champYearB.value}`;
+    mastheadSub.innerHTML = `${champA.label} vs ${champB.label} — Cooperstown Clash` + (earliestYear<1960 ? ` <span class="era-badge">Vintage Era</span>` : '');
+  }
   showLineupReveal(away, home, ()=>{
     showView(gameView);
     renderAll();
