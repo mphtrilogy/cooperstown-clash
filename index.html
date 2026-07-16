@@ -229,6 +229,13 @@
   .game-over-banner .gob-title{ font-size:0.72rem; letter-spacing:3px; text-transform:uppercase; opacity:0.85; }
   .game-over-banner .gob-winner{ font-size:1.4rem; font-weight:bold; font-family:'Playfair Display',Georgia,serif; margin:2px 0; }
   .game-over-banner .gob-score{ font-size:0.95rem; letter-spacing:1px; }
+  .share-btn{
+    display:inline-block; margin-top:8px; font-family:'Courier New',monospace; font-size:0.7rem;
+    letter-spacing:1px; padding:6px 14px; background:var(--ink); color:var(--gold);
+    border:1.5px solid var(--ink); border-radius:4px; cursor:pointer;
+  }
+  .game-over-banner .share-btn{ background:var(--paper); color:var(--ink); }
+  .series-status-panel .share-btn{ background:var(--paper); color:var(--ink); }
 
   .series-status-panel{
     text-align:center; background:var(--ink); color:var(--paper); border-radius:8px;
@@ -570,7 +577,7 @@
     <a class="coffee-link" href="https://www.buymeacoffee.com/mhughes65v" target="_blank" rel="noopener">☕ Buy Me a Coffee</a>
   </header>
 
-  <div class="top-nav-row"><button id="homeNavBtn">🏠 Home</button><button id="leaderboardNavBtn">🏆 All-Time Leaderboard</button></div>
+  <div class="top-nav-row"><button id="homeNavBtn">🏠 Home</button><button id="leaderboardNavBtn">🏆 All-Time Leaderboard</button><button id="soundToggleBtn">🔊 Sound</button></div>
 
   <!-- ============ MODE SELECT ============ -->
   <div id="modeSelectView">
@@ -2019,6 +2026,25 @@ function renderChampBullpenPanel(){
   });
 }
 
+/* Native share sheet where available (mobile browsers mostly), clipboard
+   copy as the fallback everywhere else — either way the person gets a
+   ready-to-paste result to send someone. */
+async function shareResult(text, btn){
+  try{
+    if(navigator.share){
+      await navigator.share({ text, url: 'https://cooperstownclash.com' });
+      return;
+    }
+  }catch(e){ /* user cancelled or share failed — fall through to clipboard */ }
+  try{
+    await navigator.clipboard.writeText(text + ' https://cooperstownclash.com');
+    if(btn){ const orig = btn.textContent; btn.textContent = 'Copied!'; setTimeout(()=>{ btn.textContent = orig; }, 1500); }
+  }catch(e){ console.warn('Could not share or copy (non-fatal):', e); }
+}
+function wireShareButton(container, text){
+  const btn = container.querySelector('.share-btn');
+  if(btn) btn.addEventListener('click', ()=> shareResult(text, btn));
+}
 function checkGameOverBanner(){
   const banner = document.getElementById('gameOverBanner');
   if(!banner) return;
@@ -2027,10 +2053,13 @@ function checkGameOverBanner(){
   state._gameOverBannerShown = true;
   const winner = state.away.score > state.home.score ? state.away : state.home;
   const loser = winner===state.away ? state.home : state.away;
-  banner.innerHTML = `<div class="gob-title">Final</div><div class="gob-winner">🏆 ${winner.name} Win!</div><div class="gob-score">${winner.score} – ${loser.score}</div>`;
+  const shareText = `🏆 ${winner.name} beat ${loser.name} ${winner.score}-${loser.score} in Cooperstown Clash! Think you can top that?`;
+  banner.innerHTML = `<div class="gob-title">Final</div><div class="gob-winner">🏆 ${winner.name} Win!</div><div class="gob-score">${winner.score} – ${loser.score}</div>
+    <button class="share-btn">📤 Share</button>`;
   banner.classList.remove('hidden','pop');
   void banner.offsetWidth;
   banner.classList.add('pop');
+  wireShareButton(banner, shareText);
 }
 function renderAll(rollInfo){
   renderScoreboard(); renderStatus(); renderBases(); renderOuts(); renderMound(); renderAtBat(rollInfo); renderLog(); renderLineups();
@@ -2097,7 +2126,9 @@ function handleSeriesGameEnd(){
     const champLabel = worldSeries.winsA > worldSeries.winsB ? champA.label : champB.label;
     worldSeries.champLabel = champLabel;
     panel.classList.add('champ');
-    panel.innerHTML = `<div class="sp-title">World Series Champion</div><div class="sp-score">🏆 ${champLabel}</div><div class="sp-games">Series: ${champA.label} ${worldSeries.winsA} – ${worldSeries.winsB} ${champB.label}</div>`;
+    const wsShareText = `🏆 ${champLabel} just won the World Series ${Math.max(worldSeries.winsA,worldSeries.winsB)}-${Math.min(worldSeries.winsA,worldSeries.winsB)} over ${champLabel===champA.label?champB.label:champA.label} in Cooperstown Clash!`;
+    panel.innerHTML = `<div class="sp-title">World Series Champion</div><div class="sp-score">🏆 ${champLabel}</div><div class="sp-games">Series: ${champA.label} ${worldSeries.winsA} – ${worldSeries.winsB} ${champB.label}</div><button class="share-btn">📤 Share</button>`;
+    wireShareButton(panel, wsShareText);
     nextBtn.classList.add('hidden');
     rematchBtn.classList.remove('hidden');
     recordWorldSeriesResult(champA.label, champB.label, champLabel, worldSeries.winsA, worldSeries.winsB, worldSeries.gameNum);
@@ -2171,6 +2202,88 @@ boxScoreBtn.addEventListener('click', ()=>{
   else { boxScorePanel.classList.remove('hidden'); boxScoreBtn.textContent = '📋 Hide Box Score'; renderBoxScore(); }
 });
 
+/* ---------- Sound: fully synthesized via Web Audio API, no external files ----------
+   Only plays during manual "Next At-Bat" stepping — Sim Half-Inning/Sim Full
+   Game stay silent, since a wall of sound during bulk simulation would be
+   the opposite of subtle. Respects a mute toggle, persisted locally. */
+let audioCtx = null;
+let soundEnabled = localStorage.getItem('cooperstownSoundEnabled') !== 'false'; // default on
+function getAudioCtx(){
+  if(!audioCtx){
+    try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ return null; }
+  }
+  if(audioCtx && audioCtx.state === 'suspended'){ audioCtx.resume().catch(()=>{}); }
+  return audioCtx;
+}
+function playHitSound(){
+  if(!soundEnabled) return;
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  const now = ctx.currentTime;
+  const bufferSize = Math.floor(ctx.sampleRate * 0.08);
+  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for(let i=0;i<bufferSize;i++){ data[i] = (Math.random()*2-1) * Math.pow(1-i/bufferSize, 3); }
+  const noise = ctx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass'; filter.frequency.value = 1800;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.22, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now+0.08);
+  noise.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+  noise.start(now);
+}
+function playHRSound(){
+  if(!soundEnabled) return;
+  playHitSound();
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(300, now+0.05);
+  osc.frequency.exponentialRampToValueAtTime(700, now+0.4);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.001, now+0.05);
+  gain.gain.linearRampToValueAtTime(0.12, now+0.15);
+  gain.gain.exponentialRampToValueAtTime(0.001, now+0.5);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now+0.05); osc.stop(now+0.5);
+}
+function playStrikeoutSound(){
+  if(!soundEnabled) return;
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(180, now);
+  osc.frequency.exponentialRampToValueAtTime(80, now+0.12);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.07, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now+0.12);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now+0.12);
+}
+function playOutcomeSound(outcome){
+  if(outcome==='HR') playHRSound();
+  else if(outcome==='1B'||outcome==='2B'||outcome==='3B') playHitSound();
+  else if(outcome==='K') playStrikeoutSound();
+}
+function updateSoundToggleBtn(){
+  const btn = document.getElementById('soundToggleBtn');
+  if(!btn) return;
+  btn.textContent = soundEnabled ? '🔊 Sound' : '🔇 Muted';
+}
+document.getElementById('soundToggleBtn').addEventListener('click', ()=>{
+  soundEnabled = !soundEnabled;
+  localStorage.setItem('cooperstownSoundEnabled', soundEnabled ? 'true' : 'false');
+  updateSoundToggleBtn();
+  if(soundEnabled) getAudioCtx(); // unlock audio context on this user gesture
+});
+updateSoundToggleBtn();
+
 let isRolling = false;
 function scrollResultIntoView(){
   // Manual scroll calculation with an explicit safety buffer, rather than
@@ -2205,6 +2318,7 @@ stepBtn.addEventListener('click', ()=>{
       d20.textContent = info.roll;
       setTimeout(()=>{
         d20.classList.remove('rolling');
+        playOutcomeSound(info.outcome);
         if(state.away.pitcher.name !== beforeAwayP) showPitchingChangeCard(state.away.pitcher);
         if(state.home.pitcher.name !== beforeHomeP) showPitchingChangeCard(state.home.pitcher);
         renderAll(info);
@@ -2606,7 +2720,10 @@ function handleHofPostseasonGameEnd(){
     const champLabel = hofPostseason.winsA>hofPostseason.winsB ? hofPostseason.teamA.name : hofPostseason.teamB.name;
     hofPostseason.champLabel = champLabel;
     panel.classList.add('champ');
-    panel.innerHTML = `<div class="sp-title">Postseason Champion</div><div class="sp-score">🏆 ${champLabel}</div><div class="sp-games">Series: ${hofPostseason.teamA.name} ${hofPostseason.winsA} – ${hofPostseason.winsB} ${hofPostseason.teamB.name}</div>`;
+    const loserLabel = champLabel===hofPostseason.teamA.name ? hofPostseason.teamB.name : hofPostseason.teamA.name;
+    const psShareText = `🏆 ${champLabel} just won the Hall of Fame Game postseason ${Math.max(hofPostseason.winsA,hofPostseason.winsB)}-${Math.min(hofPostseason.winsA,hofPostseason.winsB)} over ${loserLabel} in Cooperstown Clash!`;
+    panel.innerHTML = `<div class="sp-title">Postseason Champion</div><div class="sp-score">🏆 ${champLabel}</div><div class="sp-games">Series: ${hofPostseason.teamA.name} ${hofPostseason.winsA} – ${hofPostseason.winsB} ${hofPostseason.teamB.name}</div><button class="share-btn">📤 Share</button>`;
+    wireShareButton(panel, psShareText);
     nextBtn.classList.add('hidden');
     recordSeasonResult(hofPostseason.league, champLabel);
     clearActiveSeasonFromStorage();
