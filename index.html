@@ -201,6 +201,21 @@
   .runner-dot.out{ fill: var(--away); filter: drop-shadow(0 0 2px rgba(161,60,48,0.9)); }
 
   /* ---------- Game-over banner ---------- */
+  .season-progress-panel{
+    text-align:center; background:var(--paper-light); border:1px solid var(--line); border-radius:8px;
+    padding:14px 18px; margin-bottom:14px; font-family:'Courier New',monospace;
+  }
+  .season-progress-panel .sp-title{ font-size:0.72rem; letter-spacing:2px; text-transform:uppercase; color:var(--ink-soft); }
+  .season-progress-panel .sp-bar{ height:10px; background:var(--paper-dark); border-radius:5px; margin:8px 0 6px; overflow:hidden; }
+  .season-progress-panel .sp-fill{ height:100%; background:var(--gold); transition:width 0.4s ease; }
+  .season-progress-panel .sp-count{ font-size:0.78rem; color:var(--ink-soft); }
+  .resume-season-banner{
+    background:var(--ink); color:var(--paper); border-radius:8px; padding:14px 18px;
+    margin:0 0 16px; text-align:center; font-family:'Courier New',monospace;
+  }
+  .resume-season-banner .rb-title{ font-size:0.72rem; letter-spacing:2px; text-transform:uppercase; color:var(--gold); }
+  .resume-season-banner .rb-detail{ font-size:0.82rem; margin:4px 0 10px; }
+
   .game-over-banner{
     text-align:center; background:var(--gold); color:var(--ink); border-radius:8px;
     padding:14px 20px; margin-bottom:12px; box-shadow:0 4px 0 #94722a; font-family:'Courier New',monospace;
@@ -559,6 +574,7 @@
 
   <!-- ============ MODE SELECT ============ -->
   <div id="modeSelectView">
+    <div id="resumeSeasonBanner" class="resume-season-banner hidden"></div>
     <div class="mode-cards">
       <div class="mode-card">
         <h3>🏟️ The Hall of Fame Game</h3>
@@ -668,13 +684,14 @@
 
     <div class="controls" style="justify-content:center;">
       <button class="big" id="playBallBtn">Play Exhibition Game</button>
-      <button class="big secondary" id="playSeasonBtn">Simulate Full Season</button>
+      <button class="big secondary" id="playSeasonBtn">Start Season (Resumable)</button>
     </div>
-    <p class="hint" style="text-align:center;">Exhibition: one game vs. your draft rival. Season: a real 162-game season across a 6-team league (you, your rival, and 4 auto-built clubs from the remaining pool), then the top two by record meet in a championship. Note: pitching staffs are 3 arms, not a real 5-man rotation — a season cycles your 3 drafted pitchers through the starts rather than running one guy out there 162 times. It's a simulation, not a full roster sim.</p>
+    <p class="hint" style="text-align:center;">Exhibition: one game vs. your draft rival. Season: a real 162-game season across a 6-team league (you, your rival, and 4 auto-built clubs from the remaining pool) — play it in chunks, check in whenever, then the top two by record meet in a real best-of-7 postseason. Note: pitching staffs are 3 arms, not a real 5-man rotation — a season cycles your 3 drafted pitchers through the starts rather than running one guy out there 162 times. It's a simulation, not a full roster sim.</p>
   </div>
 
   <!-- ============ SEASON VIEW ============ -->
   <div id="seasonView" class="hidden">
+    <div id="seasonProgressWrap"></div>
     <div id="seasonStandingsWrap"></div>
     <div id="seasonChampWrap"></div>
     <div class="controls">
@@ -2307,6 +2324,27 @@ function buildSeasonSchedule(teams, gamesPerTeam){
   return schedule;
 }
 
+const ACTIVE_SEASON_KEY = 'cooperstownClashActiveSeason';
+/* A season is personal, not shared like the leaderboard — browser storage is
+   the right home for it, not Supabase. Saved after every chunk of games so
+   closing the tab mid-season never loses progress. */
+function saveActiveSeasonToStorage(league){
+  try{
+    localStorage.setItem(ACTIVE_SEASON_KEY, JSON.stringify({ league, savedAt: Date.now() }));
+  }catch(e){ console.warn('Could not save season progress locally (non-fatal):', e); }
+}
+function loadActiveSeasonFromStorage(){
+  try{
+    const raw = localStorage.getItem(ACTIVE_SEASON_KEY);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.league ? parsed.league : null;
+  }catch(e){ console.warn('Could not load saved season (non-fatal):', e); return null; }
+}
+function clearActiveSeasonFromStorage(){
+  try{ localStorage.removeItem(ACTIVE_SEASON_KEY); }catch(e){}
+}
+
 function buildLeague(){
   const remainingPool = draft.pool.slice(); // still ~200 players after your 1v1 draft
   const usedNames = new Set([draft.you.name, draft.cpu.name]);
@@ -2319,7 +2357,8 @@ function buildLeague(){
   const you = { key:'you', name:draft.you.name, roster:rosterWithStarter(draft.you.roster, yourStarterSlot), lineupOrder:yourLineupOrder.slice(), wins:0,losses:0,rf:0,ra:0, isYou:true };
   const rival = { key:'rival', name:draft.cpu.name, roster:draft.cpu.roster, lineupOrder:defaultCpuLineupOrder(draft.cpu.roster), wins:0,losses:0,rf:0,ra:0, isYou:false };
   const extras = extraTeams.map((t,i)=>({ key:'cpu'+i, name:t.name, roster:t.roster, lineupOrder:defaultCpuLineupOrder(t.roster), wins:0,losses:0,rf:0,ra:0, isYou:false }));
-  return { teams:[you, rival, ...extras], games:[], seasonStats:{} };
+  const teams = [you, rival, ...extras];
+  return { teams, games:[], seasonStats:{}, schedule: buildSeasonSchedule(teams, SEASON_LENGTH), scheduleIdx: 0 };
 }
 
 /* Runs every regular-season game silently in the background using the same
@@ -2348,14 +2387,17 @@ function accumulateSeasonStats(league, teamState){
   });
 }
 
-function simulateRegularSeason(league, gamesPerTeam){
-  gamesPerTeam = gamesPerTeam || SEASON_LENGTH;
-  const schedule = buildSeasonSchedule(league.teams, gamesPerTeam);
+/* Plays the next `numGames` games from wherever the schedule left off —
+   this is what makes a season resumable. Returns true if the season is now
+   fully complete (every scheduled game played), false if there's more to go. */
+function simulateSeasonChunk(league, numGames){
   league.teams.forEach(t=>{
     if(t.rotIdx===undefined) t.rotIdx = 0;
-    t.rotationSlots = eligibleRotationSlots(t.roster); // computed once per team, real-profile filtered
+    if(!t.rotationSlots) t.rotationSlots = eligibleRotationSlots(t.roster); // computed once per team, real-profile filtered
   });
-  schedule.forEach(([i,j])=>{
+  const end = Math.min(league.scheduleIdx + numGames, league.schedule.length);
+  for(let idx=league.scheduleIdx; idx<end; idx++){
+    const [i,j] = league.schedule[idx];
     const a = league.teams[i], b = league.teams[j]; // a = away, b = home
     // Rotation cycles only through pitchers who were actually real starters (GS/G >= 0.5).
     // A true reliever on the roster (like peak Rivera) never gets slotted in as "today's
@@ -2378,8 +2420,15 @@ function simulateRegularSeason(league, gamesPerTeam){
     league.games.push({away:a.name, home:b.name, awayScore:awayTeamState.score, homeScore:homeTeamState.score});
     accumulateSeasonStats(league, awayTeamState);
     accumulateSeasonStats(league, homeTeamState);
-  });
-  league.teams.sort((x,y)=>{
+  }
+  league.scheduleIdx = end;
+  return league.scheduleIdx >= league.schedule.length;
+}
+/* league.teams stays in FIXED order — the schedule references teams by
+   array index, so resorting the array in place would silently corrupt every
+   future chunk's matchups. Standings are always a sorted COPY for display. */
+function standingsOrder(league){
+  return league.teams.slice().sort((x,y)=>{
     const xp = x.wins/((x.wins+x.losses)||1), yp = y.wins/((y.wins+y.losses)||1);
     if(yp!==xp) return yp-xp;
     return (y.rf-y.ra)-(x.rf-x.ra);
@@ -2420,19 +2469,48 @@ function renderStandingsTable(teams, championName){
   return `<table class="standings"><tr><th>Team</th><th>W</th><th>L</th><th>PCT</th><th>RF</th><th>RA</th><th>DIFF</th></tr>${rows}</table>`;
 }
 
+const SEASON_CHUNK_SIZE = 40; // games per click — roughly a dozen clicks to finish a full 486-game slate
 function showSeasonRegularResults(league){
   currentLeague = league;
   draftView.classList.add('hidden'); lineupView.classList.add('hidden'); gameView.classList.add('hidden');
   showView(seasonView);
-  seasonStandingsWrap.innerHTML = renderStandingsTable(league.teams, null) + renderSeasonLeaders(league);
-  const top2 = league.teams.slice(0,2);
+  saveActiveSeasonToStorage(league);
+  const total = league.schedule.length;
+  const played = league.scheduleIdx;
+  const seasonComplete = played >= total;
+
+  if(!seasonComplete){
+    const pct = Math.round((played/total)*100);
+    document.getElementById('seasonProgressWrap').innerHTML = `
+      <div class="season-progress-panel">
+        <div class="sp-title">Season In Progress</div>
+        <div class="sp-bar"><div class="sp-fill" style="width:${pct}%;"></div></div>
+        <div class="sp-count">${played} of ${total} games played (${pct}%)</div>
+        <div class="controls" style="justify-content:center;margin-top:10px;">
+          <button class="big" id="playNextChunkBtn">▶ Play Next ${Math.min(SEASON_CHUNK_SIZE, total-played)} Games</button>
+        </div>
+      </div>`;
+    document.getElementById('playNextChunkBtn').addEventListener('click', ()=>{
+      const done = simulateSeasonChunk(league, SEASON_CHUNK_SIZE);
+      showSeasonRegularResults(league);
+    });
+  } else {
+    document.getElementById('seasonProgressWrap').innerHTML = '';
+  }
+
+  seasonStandingsWrap.innerHTML = renderStandingsTable(standingsOrder(league), null) + renderSeasonLeaders(league);
+  if(!seasonComplete){
+    seasonChampWrap.innerHTML = '';
+    return;
+  }
+  const top2 = standingsOrder(league).slice(0,2);
   const youIn = top2.some(t=>t.isYou);
   if(youIn){
-    seasonChampWrap.innerHTML = `<div class="pick-tracker">Regular season complete — you made the championship!</div>
-      <div class="controls"><button class="big" id="startChampBtn">Play the Championship: ${top2[0].name} vs ${top2[1].name}</button></div>`;
+    seasonChampWrap.innerHTML = `<div class="pick-tracker">Regular season complete — you made the postseason!</div>
+      <div class="controls"><button class="big" id="startChampBtn">Play the Postseason (Best of 7): ${top2[0].name} vs ${top2[1].name}</button></div>`;
     document.getElementById('startChampBtn').addEventListener('click', ()=> startChampionship(league));
   } else {
-    seasonChampWrap.innerHTML = `<div class="pick-tracker">Regular season complete. Simulating the championship...</div>`;
+    seasonChampWrap.innerHTML = `<div class="pick-tracker">Regular season complete. Simulating the postseason...</div>`;
     startChampionship(league); // instant-sim path, will re-render this view with the result
   }
 }
@@ -2445,7 +2523,7 @@ function showSeasonRegularResults(league){
 let hofPostseason = null; // {league, teamA, teamB, winsA, winsB, gameNum, results, done, champLabel}
 
 function startChampionship(league){
-  const top2 = league.teams.slice(0,2);
+  const top2 = standingsOrder(league).slice(0,2);
   hofPostseason = { league, teamA:top2[0], teamB:top2[1], winsA:0, winsB:0, gameNum:1, results:[], done:false };
   const youFinalist = top2.find(t=>t.isYou);
   if(youFinalist){
@@ -2502,6 +2580,7 @@ function simHofPostseasonGameInstant(){
     hofPostseason.done = true;
     hofPostseason.champLabel = hofPostseason.winsA>hofPostseason.winsB ? hofPostseason.teamA.name : hofPostseason.teamB.name;
     recordSeasonResult(hofPostseason.league, hofPostseason.champLabel);
+    clearActiveSeasonFromStorage();
   } else {
     hofPostseason.gameNum++;
   }
@@ -2530,6 +2609,7 @@ function handleHofPostseasonGameEnd(){
     panel.innerHTML = `<div class="sp-title">Postseason Champion</div><div class="sp-score">🏆 ${champLabel}</div><div class="sp-games">Series: ${hofPostseason.teamA.name} ${hofPostseason.winsA} – ${hofPostseason.winsB} ${hofPostseason.teamB.name}</div>`;
     nextBtn.classList.add('hidden');
     recordSeasonResult(hofPostseason.league, champLabel);
+    clearActiveSeasonFromStorage();
     viewSeasonResultsBtn.classList.remove('hidden');
     viewSeasonResultsBtn.onclick = ()=>{ renderSeasonView(hofPostseason.league, champLabel); };
   } else {
@@ -2543,14 +2623,14 @@ function handleHofPostseasonGameEnd(){
 function renderSeasonView(league, championName){
   gameView.classList.add('hidden');
   showView(seasonView);
-  seasonStandingsWrap.innerHTML = renderStandingsTable(league.teams, championName) + renderSeasonLeaders(league);
+  seasonStandingsWrap.innerHTML = renderStandingsTable(standingsOrder(league), championName) + renderSeasonLeaders(league);
   const you = league.teams.find(t=>t.isYou);
   const youWon = you && championName === you.name;
   let msg;
   if(!you) msg = '';
   else if(youWon) msg = 'Your team took the title! 🎉';
   else {
-    const rank = league.teams.findIndex(t=>t.isYou) + 1;
+    const rank = standingsOrder(league).findIndex(t=>t.isYou) + 1;
     msg = `${you.name} finished ${ordinal(rank)} — ${championName} won it all.`;
   }
   seasonChampWrap.innerHTML = `<div class="champion-banner"><span class="big">🏆 ${championName}</span>${msg}</div>`;
@@ -2558,13 +2638,13 @@ function renderSeasonView(league, championName){
 
 playSeasonBtn.addEventListener('click', ()=>{
   playSeasonBtn.disabled = true;
-  playSeasonBtn.textContent = 'Simulating 486 games…';
+  playSeasonBtn.textContent = 'Starting season…';
   setTimeout(()=>{
     const league = buildLeague();
-    simulateRegularSeason(league);
+    simulateSeasonChunk(league, SEASON_CHUNK_SIZE);
     showSeasonRegularResults(league);
     playSeasonBtn.disabled = false;
-    playSeasonBtn.textContent = 'Simulate Full Season';
+    playSeasonBtn.textContent = 'Start Season (Resumable)';
   }, 30);
 });
 
@@ -2939,6 +3019,35 @@ function showModeSelect(){
   showView(modeSelectView);
   mastheadTitle.textContent = 'Cooperstown Arcade';
   mastheadSub.textContent = 'Two ways to play. Real career stats, every time.';
+  renderResumeSeasonBanner();
+}
+function renderResumeSeasonBanner(){
+  const banner = document.getElementById('resumeSeasonBanner');
+  const saved = loadActiveSeasonFromStorage();
+  if(!saved || !saved.teams){ banner.classList.add('hidden'); banner.innerHTML=''; return; }
+  const you = saved.teams.find(t=>t.isYou);
+  const total = saved.schedule ? saved.schedule.length : 0;
+  const played = saved.scheduleIdx || 0;
+  const pct = total ? Math.round((played/total)*100) : 0;
+  banner.classList.remove('hidden');
+  banner.innerHTML = `<div class="rb-title">Season In Progress</div>
+    <div class="rb-detail">${you ? you.name : 'Your team'} — ${played}/${total} games played (${pct}%)${you ? `, ${you.wins}-${you.losses}` : ''}</div>
+    <div class="controls" style="justify-content:center;">
+      <button class="big" id="resumeSeasonBtn">▶ Continue Your Season</button>
+      <button class="big secondary" id="discardSeasonBtn">Discard</button>
+    </div>`;
+  document.getElementById('resumeSeasonBtn').addEventListener('click', ()=>{
+    currentLeague = saved;
+    hideAllTopViews();
+    showView(seasonView);
+    mastheadTitle.textContent = 'The Hall of Fame Game';
+    mastheadSub.textContent = `${you ? you.name : 'Your team'}'s season`;
+    showSeasonRegularResults(saved);
+  });
+  document.getElementById('discardSeasonBtn').addEventListener('click', ()=>{
+    clearActiveSeasonFromStorage();
+    renderResumeSeasonBanner();
+  });
 }
 
 chooseHofBtn.addEventListener('click', ()=>{
